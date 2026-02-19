@@ -16,12 +16,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-PLEX_URL   = os.environ.get("PLEX_URL",   "http://192.168.1.101:32400")
-PLEX_TOKEN = os.environ.get("PLEX_TOKEN", "6eMBEX1VddA6wh5LZwFj")
-DEBRID_URL = os.environ.get("DEBRID_URL", "http://192.168.1.101:5500")
+PLEX_URL   = os.environ.get("PLEX_URL",   "http://NAS_IP:32400")
+PLEX_TOKEN = os.environ.get("PLEX_TOKEN", "")
+DEBRID_URL = os.environ.get("DEBRID_URL", "http://NAS_IP:5500")
 DB_PATH    = os.environ.get("DB_PATH",    "plex_dashboard.db")
 RD_TOKEN   = os.environ.get("RD_TOKEN",   "")
-ZILEAN_URL = os.environ.get("ZILEAN_URL", "http://192.168.1.101:8181")
+ZILEAN_URL = os.environ.get("ZILEAN_URL", "http://NAS_IP:8181")
 DISK_PATH  = os.environ.get("DISK_PATH",  "/nas")
 POLL_INTERVAL = 30  # seconds
 

@@ -77,17 +77,17 @@ All settings are environment variables in `docker-compose.yml`. No config file n
 ```yaml
 environment:
   # Required — your Plex server
-  PLEX_URL:   http://192.168.1.x:32400
+  PLEX_URL:   http://NAS_IP:32400
   PLEX_TOKEN: your-plex-token          # Settings → Troubleshooting → Your Token
 
   # Optional — cli_debrid
-  DEBRID_URL: http://192.168.1.x:5500
+  DEBRID_URL: http://NAS_IP:5500
 
   # Optional — Real-Debrid usage tracking (leave commented out to disable)
   # RD_TOKEN: your-real-debrid-api-token
 
   # Optional — Zilean torrent indexer
-  ZILEAN_URL: http://192.168.1.x:8181
+  ZILEAN_URL: http://NAS_IP:8181
 
   # Optional — disk path to monitor (default: /nas)
   DISK_PATH: /nas
