@@ -4,30 +4,34 @@ services:
     container_name: plex-dashboard
     restart: unless-stopped
 
-    # Host networking lets the container reach:
-    #   - Plex at NAS_IP:32400
-    #   - cli_debrid at NAS_IP:5500
-    #   - Zilean at NAS_IP:8181
-    # The app will bind directly to host port 8080.
+    # Host networking gives the container direct access to other services
+    # running on the same host / LAN (Plex, cli_debrid, Zilean, etc.)
+    # The app binds to host port 8080.
     network_mode: host
 
     volumes:
-      # SQLite database persists across container rebuilds
+      # SQLite database — persists across container rebuilds
       - ./data:/data
       # NAS storage for disk usage monitoring (read-only)
+      # Adjust the host path to match your NAS volume, e.g. /volume2
       - /volume1:/nas:ro
-      # Docker socket for container monitoring (read-only)
-      # Note: container must run with same GID as docker group on host.
-      # On Synology: check `stat /var/run/docker.sock` and set group accordingly.
+      # Docker socket for container overview (read-only)
+      # Note: on Synology check `stat /var/run/docker.sock` for the GID
       - /var/run/docker.sock:/var/run/docker.sock:ro
 
     environment:
-      DB_PATH: /data/plex_dashboard.db
+      DB_PATH:   /data/plex_dashboard.db
       DISK_PATH: /nas
-      ZILEAN_URL: NAS_IP:8181
-      # Override Plex / debrid endpoints here if they ever change:
-      # PLEX_URL: http://NAS_IP:32400
-      # PLEX_TOKEN: <paste your plex token>
-      # DEBRID_URL: http://NAS_IP:5500
-      # Real-Debrid token for usage tracking:
-      # RD_TOKEN: <paste your token here>
+
+      # ── Required ────────────────────────────────────────────────────────
+      PLEX_URL:   http://YOUR_NAS_IP:32400
+      PLEX_TOKEN: your-plex-token-here
+
+      # ── Optional — cli_debrid ────────────────────────────────────────────
+      DEBRID_URL: http://YOUR_NAS_IP:5500
+
+      # ── Optional — Zilean torrent indexer ───────────────────────────────
+      ZILEAN_URL: http://YOUR_NAS_IP:8181
+
+      # ── Optional — Real-Debrid usage tracking ───────────────────────────
+      # RD_TOKEN: your-real-debrid-api-token
