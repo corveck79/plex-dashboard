@@ -5,9 +5,9 @@ services:
     restart: unless-stopped
 
     # Host networking lets the container reach:
-    #   - Plex at 192.168.1.101:32400
-    #   - cli_debrid at 192.168.1.101:5500
-    #   - Zilean at 192.168.1.101:8181
+    #   - Plex at NAS_IP:32400
+    #   - cli_debrid at NAS_IP:5500
+    #   - Zilean at NAS_IP:8181
     # The app will bind directly to host port 8080.
     network_mode: host
 
@@ -24,10 +24,10 @@ services:
     environment:
       DB_PATH: /data/plex_dashboard.db
       DISK_PATH: /nas
-      ZILEAN_URL: http://192.168.1.101:8181
+      ZILEAN_URL: NAS_IP:8181
       # Override Plex / debrid endpoints here if they ever change:
-      # PLEX_URL: http://192.168.1.101:32400
-      # PLEX_TOKEN: 6eMBEX1VddA6wh5LZwFj
-      # DEBRID_URL: http://192.168.1.101:5500
+      # PLEX_URL: http://NAS_IP:32400
+      # PLEX_TOKEN: <paste your plex token>
+      # DEBRID_URL: http://NAS_IP:5500
       # Real-Debrid token for usage tracking:
       # RD_TOKEN: <paste your token here>
