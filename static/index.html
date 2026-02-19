@@ -23,7 +23,14 @@
     ::-webkit-scrollbar { width:5px; height:5px; }
     ::-webkit-scrollbar-track { background:#161b26; }
     ::-webkit-scrollbar-thumb { background:#E5A00D; border-radius:3px; }
-    .btn-active { background:#E5A00D !important; color:#000 !important; }
+    .btn-active { background:#E5A00D !important; color:#000 !important; font-weight:600 !important; }
+    .tab-btn { transition: all .15s; }
+    .tab-btn.active { border-bottom: 2px solid #E5A00D; color: #E5A00D; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    .gauge-ring { transform-origin: 50% 50%; transform: rotate(-90deg); }
+    .cat-btn { transition: all .15s; }
+    .cat-btn.active { background:#8B5CF6 !important; color:#fff !important; }
   </style>
 </head>
 <body class="text-gray-200 min-h-screen">
@@ -32,8 +39,7 @@
 <header class="sticky top-0 z-10 border-b border-gray-800" style="background:#0d0f14cc;backdrop-filter:blur(8px)">
   <div class="max-w-7xl mx-auto px-5 py-3 flex items-center justify-between">
     <div class="flex items-center gap-3">
-      <!-- Plex-style play button logo -->
-      <svg class="w-7 h-7 text-plex" viewBox="0 0 24 24" fill="currentColor">
+      <svg class="w-7 h-7" viewBox="0 0 24 24" fill="currentColor">
         <circle cx="12" cy="12" r="10" fill="#E5A00D" opacity=".15"/>
         <path d="M10 8.5l6 3.5-6 3.5V8.5z" fill="#E5A00D"/>
       </svg>
@@ -47,18 +53,37 @@
         <span class="w-2 h-2 rounded-full pulse" id="dot" style="background:#22c55e"></span>
         <span id="conn-status" class="text-gray-400">Connecting…</span>
       </div>
-      <button onclick="refreshAll()"
+      <button onclick="refreshActiveTab()"
         class="px-3 py-1.5 rounded text-xs text-gray-300 transition-colors hover:text-white"
         style="background:#1e2535">
         ↻ Refresh
       </button>
     </div>
   </div>
+
+  <!-- Tab bar -->
+  <div class="max-w-7xl mx-auto px-5 flex gap-1 border-t border-gray-800/50">
+    <button class="tab-btn active px-4 py-2.5 text-sm font-medium text-gray-400 border-b-2 border-transparent"
+            onclick="switchTab('live')" id="tab-live">🔴 Live</button>
+    <button class="tab-btn px-4 py-2.5 text-sm font-medium text-gray-400 border-b-2 border-transparent"
+            onclick="switchTab('analytics')" id="tab-analytics">📊 Analytics</button>
+    <button class="tab-btn px-4 py-2.5 text-sm font-medium text-gray-400 border-b-2 border-transparent"
+            onclick="switchTab('library')" id="tab-library">📚 Library</button>
+    <button class="tab-btn px-4 py-2.5 text-sm font-medium text-gray-400 border-b-2 border-transparent"
+            onclick="switchTab('queue')" id="tab-queue">⚡ Queue</button>
+    <button class="tab-btn px-4 py-2.5 text-sm font-medium text-gray-400 border-b-2 border-transparent"
+            onclick="switchTab('system')" id="tab-system">🖥️ System</button>
+  </div>
 </header>
 
-<main class="max-w-7xl mx-auto px-5 py-5 space-y-6">
+<main class="max-w-7xl mx-auto px-5 py-5">
 
-  <!-- ─── Stat chips ──────────────────────────────────────────────────── -->
+<!-- ═══════════════════════════════════════════════════════════════════════
+     TAB 1 — LIVE
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div id="panel-live" class="tab-panel active space-y-6">
+
+  <!-- Stat chips -->
   <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
     <div class="card rounded-xl p-4">
       <p class="text-xs text-gray-500 uppercase tracking-widest">Active Streams</p>
@@ -78,7 +103,7 @@
     </div>
   </div>
 
-  <!-- ─── Current Viewers ─────────────────────────────────────────────── -->
+  <!-- Currently Watching -->
   <section>
     <div class="flex items-center justify-between mb-3">
       <h2 class="font-semibold flex items-center gap-2">
@@ -88,46 +113,11 @@
       <span class="text-xs text-gray-500" id="session-count">0 streams</span>
     </div>
     <div id="sessions-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-      <div class="col-span-full text-center py-10 text-gray-600 text-sm" id="sessions-empty">
-        No active streams
-      </div>
+      <div class="col-span-full text-center py-10 text-gray-600 text-sm">No active streams</div>
     </div>
   </section>
 
-  <!-- ─── Bandwidth chart + Debrid queue ──────────────────────────────── -->
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
-
-    <!-- Bandwidth chart (2/3) -->
-    <div class="lg:col-span-2 card rounded-xl p-5">
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="font-semibold">Bandwidth History</h2>
-        <div class="flex gap-1">
-          <button class="bw-btn px-2 py-1 text-xs rounded" data-h="1"  onclick="loadBandwidth(1)">1h</button>
-          <button class="bw-btn px-2 py-1 text-xs rounded" data-h="3"  onclick="loadBandwidth(3)">3h</button>
-          <button class="bw-btn px-2 py-1 text-xs rounded btn-active" data-h="6"  onclick="loadBandwidth(6)">6h</button>
-          <button class="bw-btn px-2 py-1 text-xs rounded" data-h="24" onclick="loadBandwidth(24)">24h</button>
-        </div>
-      </div>
-      <div class="relative" style="height:260px">
-        <canvas id="bw-chart"></canvas>
-        <div id="bw-empty" class="absolute inset-0 hidden items-center justify-center text-gray-600 text-sm flex">
-          No bandwidth data yet — data accumulates as streams play
-        </div>
-      </div>
-    </div>
-
-    <!-- cli_debrid queue (1/3) -->
-    <div class="card rounded-xl p-5">
-      <h2 class="font-semibold mb-3 flex items-center gap-2">
-        <span class="text-purple-400 text-base">⚡</span> cli_debrid Queue
-      </h2>
-      <div id="debrid-list" class="space-y-2 overflow-y-auto" style="max-height:260px">
-        <p class="text-gray-600 text-sm text-center py-6">Loading…</p>
-      </div>
-    </div>
-  </div>
-
-  <!-- ─── Per-user stats ───────────────────────────────────────────────── -->
+  <!-- User Stats table -->
   <section class="card rounded-xl overflow-hidden">
     <div class="px-5 py-3 border-b border-gray-800">
       <h2 class="font-semibold">User Stats</h2>
@@ -150,7 +140,7 @@
     </div>
   </section>
 
-  <!-- ─── Watch History ────────────────────────────────────────────────── -->
+  <!-- Watch History -->
   <section class="card rounded-xl overflow-hidden">
     <div class="px-5 py-3 border-b border-gray-800 flex items-center justify-between">
       <h2 class="font-semibold">Watch History</h2>
@@ -175,11 +165,300 @@
       </table>
     </div>
   </section>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     TAB 2 — ANALYTICS
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div id="panel-analytics" class="tab-panel space-y-6">
+
+  <!-- Bandwidth history -->
+  <div class="card rounded-xl p-5">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="font-semibold">Bandwidth History</h2>
+      <div class="flex gap-1">
+        <button class="bw-btn px-2 py-1 text-xs rounded" data-h="1"  onclick="loadBandwidth(1)">1h</button>
+        <button class="bw-btn px-2 py-1 text-xs rounded" data-h="3"  onclick="loadBandwidth(3)">3h</button>
+        <button class="bw-btn px-2 py-1 text-xs rounded btn-active" data-h="6" onclick="loadBandwidth(6)">6h</button>
+        <button class="bw-btn px-2 py-1 text-xs rounded" data-h="24" onclick="loadBandwidth(24)">24h</button>
+      </div>
+    </div>
+    <div class="relative" style="height:260px">
+      <canvas id="bw-chart"></canvas>
+      <div id="bw-empty" class="absolute inset-0 hidden items-center justify-center text-gray-600 text-sm flex">
+        No bandwidth data yet — data accumulates as streams play
+      </div>
+    </div>
+  </div>
+
+  <!-- Peak hours bar chart -->
+  <div class="card rounded-xl p-5">
+    <h2 class="font-semibold mb-4">Peak Hours (stream count by hour)</h2>
+    <div class="relative" style="height:200px">
+      <canvas id="peaks-chart"></canvas>
+    </div>
+  </div>
+
+  <!-- Top 10 content + Monthly user usage -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+    <div class="card rounded-xl p-5">
+      <h2 class="font-semibold mb-4">Top 10 Content (last 30 days)</h2>
+      <div class="relative" style="height:280px">
+        <canvas id="top-content-chart"></canvas>
+      </div>
+    </div>
+    <div class="card rounded-xl overflow-hidden">
+      <div class="px-5 py-3 border-b border-gray-800">
+        <h2 class="font-semibold">Monthly Usage by User</h2>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="text-xs uppercase text-gray-500" style="background:#1a2030">
+            <tr>
+              <th class="px-4 py-3 text-left">User</th>
+              <th class="px-4 py-3 text-right">Sessions</th>
+              <th class="px-4 py-3 text-right">Approx GB</th>
+            </tr>
+          </thead>
+          <tbody id="month-table" class="divide-y divide-gray-800">
+            <tr><td colspan="3" class="px-4 py-6 text-center text-gray-600">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     TAB 3 — LIBRARY
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div id="panel-library" class="tab-panel space-y-6">
+
+  <!-- Library section cards -->
+  <section>
+    <h2 class="font-semibold mb-3">Plex Libraries</h2>
+    <div id="library-cards" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+      <div class="col-span-full text-center py-8 text-gray-600 text-sm">Loading…</div>
+    </div>
+  </section>
+
+  <!-- Recent additions -->
+  <section class="card rounded-xl overflow-hidden">
+    <div class="px-5 py-3 border-b border-gray-800">
+      <h2 class="font-semibold">Recently Added</h2>
+    </div>
+    <div id="recent-list" class="divide-y divide-gray-800">
+      <p class="px-5 py-6 text-center text-gray-600 text-sm">Loading…</p>
+    </div>
+  </section>
+
+  <!-- Transcode doughnut + RD daily usage -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+    <div class="card rounded-xl p-5">
+      <h2 class="font-semibold mb-4">Transcode Decisions</h2>
+      <div class="flex items-center justify-center" style="height:220px">
+        <canvas id="transcode-chart"></canvas>
+      </div>
+    </div>
+    <div class="card rounded-xl p-5">
+      <h2 class="font-semibold mb-4">Real-Debrid Daily Usage (last 30d)</h2>
+      <div class="relative" style="height:220px">
+        <canvas id="rd-chart"></canvas>
+        <div id="rd-notoken" class="absolute inset-0 hidden items-center justify-center text-gray-600 text-sm flex flex-col gap-1">
+          <span>No RD_TOKEN configured</span>
+          <span class="text-xs">Add RD_TOKEN to docker-compose.yml</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     TAB 4 — QUEUE
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div id="panel-queue" class="tab-panel space-y-5">
+
+  <!-- Category filter buttons -->
+  <div class="flex flex-wrap gap-2" id="cat-filters">
+    <button class="cat-btn active px-3 py-1.5 rounded text-xs font-medium" data-cat="all"
+            style="background:#1e2535"
+            onclick="filterQueue('all')">
+      All <span id="cnt-all" class="ml-1 px-1.5 py-0.5 rounded text-xs" style="background:#2a3040">0</span>
+    </button>
+    <button class="cat-btn px-3 py-1.5 rounded text-xs font-medium" data-cat="Wanted"
+            style="background:#1e2535"
+            onclick="filterQueue('Wanted')">
+      Wanted <span id="cnt-Wanted" class="ml-1 px-1.5 py-0.5 rounded text-xs" style="background:#2a3040">0</span>
+    </button>
+    <button class="cat-btn px-3 py-1.5 rounded text-xs font-medium" data-cat="Upgrading"
+            style="background:#1e2535"
+            onclick="filterQueue('Upgrading')">
+      Upgrading <span id="cnt-Upgrading" class="ml-1 px-1.5 py-0.5 rounded text-xs" style="background:#2a3040">0</span>
+    </button>
+    <button class="cat-btn px-3 py-1.5 rounded text-xs font-medium" data-cat="Checking"
+            style="background:#1e2535"
+            onclick="filterQueue('Checking')">
+      Checking <span id="cnt-Checking" class="ml-1 px-1.5 py-0.5 rounded text-xs" style="background:#2a3040">0</span>
+    </button>
+    <button class="cat-btn px-3 py-1.5 rounded text-xs font-medium" data-cat="Downloading"
+            style="background:#1e2535"
+            onclick="filterQueue('Downloading')">
+      Downloading <span id="cnt-Downloading" class="ml-1 px-1.5 py-0.5 rounded text-xs" style="background:#2a3040">0</span>
+    </button>
+    <button class="cat-btn px-3 py-1.5 rounded text-xs font-medium" data-cat="Completed"
+            style="background:#1e2535"
+            onclick="filterQueue('Completed')">
+      Completed <span id="cnt-Completed" class="ml-1 px-1.5 py-0.5 rounded text-xs" style="background:#2a3040">0</span>
+    </button>
+    <button class="cat-btn px-3 py-1.5 rounded text-xs font-medium" data-cat="Failed"
+            style="background:#1e2535"
+            onclick="filterQueue('Failed')">
+      Failed <span id="cnt-Failed" class="ml-1 px-1.5 py-0.5 rounded text-xs" style="background:#2a3040">0</span>
+    </button>
+  </div>
+
+  <!-- Item cards -->
+  <div id="queue-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+    <div class="col-span-full text-center py-10 text-gray-600 text-sm">Loading…</div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     TAB 5 — SYSTEM
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div id="panel-system" class="tab-panel space-y-6">
+
+  <!-- Gauge cards -->
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <!-- CPU -->
+    <div class="card rounded-xl p-5 flex flex-col items-center gap-2">
+      <p class="text-xs text-gray-500 uppercase tracking-widest">CPU</p>
+      <div class="relative w-24 h-24">
+        <svg viewBox="0 0 36 36" class="w-24 h-24">
+          <circle cx="18" cy="18" r="15.9" fill="none" stroke="#1e2535" stroke-width="3.5"/>
+          <circle cx="18" cy="18" r="15.9" fill="none" stroke="#E5A00D" stroke-width="3.5"
+                  stroke-dasharray="0 100" stroke-linecap="round"
+                  class="gauge-ring" id="gauge-cpu"/>
+        </svg>
+        <div class="absolute inset-0 flex items-center justify-center">
+          <span class="text-lg font-bold text-plex" id="val-cpu">—</span>
+        </div>
+      </div>
+    </div>
+    <!-- RAM -->
+    <div class="card rounded-xl p-5 flex flex-col items-center gap-2">
+      <p class="text-xs text-gray-500 uppercase tracking-widest">RAM</p>
+      <div class="relative w-24 h-24">
+        <svg viewBox="0 0 36 36" class="w-24 h-24">
+          <circle cx="18" cy="18" r="15.9" fill="none" stroke="#1e2535" stroke-width="3.5"/>
+          <circle cx="18" cy="18" r="15.9" fill="none" stroke="#3B82F6" stroke-width="3.5"
+                  stroke-dasharray="0 100" stroke-linecap="round"
+                  class="gauge-ring" id="gauge-ram"/>
+        </svg>
+        <div class="absolute inset-0 flex items-center justify-center flex-col">
+          <span class="text-sm font-bold text-blue-400" id="val-ram">—</span>
+          <span class="text-xs text-gray-600" id="val-ram-total"></span>
+        </div>
+      </div>
+    </div>
+    <!-- Disk -->
+    <div class="card rounded-xl p-5 flex flex-col items-center gap-2">
+      <p class="text-xs text-gray-500 uppercase tracking-widest">Disk</p>
+      <div class="relative w-24 h-24">
+        <svg viewBox="0 0 36 36" class="w-24 h-24">
+          <circle cx="18" cy="18" r="15.9" fill="none" stroke="#1e2535" stroke-width="3.5"/>
+          <circle cx="18" cy="18" r="15.9" fill="none" stroke="#10B981" stroke-width="3.5"
+                  stroke-dasharray="0 100" stroke-linecap="round"
+                  class="gauge-ring" id="gauge-disk"/>
+        </svg>
+        <div class="absolute inset-0 flex items-center justify-center">
+          <span class="text-sm font-bold text-green-400" id="val-disk">—</span>
+        </div>
+      </div>
+    </div>
+    <!-- Temp -->
+    <div class="card rounded-xl p-5 flex flex-col items-center gap-2">
+      <p class="text-xs text-gray-500 uppercase tracking-widest">CPU Temp</p>
+      <div class="relative w-24 h-24">
+        <svg viewBox="0 0 36 36" class="w-24 h-24">
+          <circle cx="18" cy="18" r="15.9" fill="none" stroke="#1e2535" stroke-width="3.5"/>
+          <circle cx="18" cy="18" r="15.9" fill="none" stroke="#EF4444" stroke-width="3.5"
+                  stroke-dasharray="0 100" stroke-linecap="round"
+                  class="gauge-ring" id="gauge-temp"/>
+        </svg>
+        <div class="absolute inset-0 flex items-center justify-center">
+          <span class="text-sm font-bold text-red-400" id="val-temp">—</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Network row -->
+  <div class="grid grid-cols-2 gap-4">
+    <div class="card rounded-xl p-4 flex items-center gap-4">
+      <span class="text-2xl">↓</span>
+      <div>
+        <p class="text-xs text-gray-500 uppercase tracking-widest">Network RX</p>
+        <p class="text-xl font-bold text-cyan-400" id="val-rx">—</p>
+      </div>
+    </div>
+    <div class="card rounded-xl p-4 flex items-center gap-4">
+      <span class="text-2xl">↑</span>
+      <div>
+        <p class="text-xs text-gray-500 uppercase tracking-widest">Network TX</p>
+        <p class="text-xl font-bold text-orange-400" id="val-tx">—</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- System history chart -->
+  <div class="card rounded-xl p-5">
+    <h2 class="font-semibold mb-4">CPU &amp; RAM History (last 3h)</h2>
+    <div class="relative" style="height:220px">
+      <canvas id="sys-history-chart"></canvas>
+    </div>
+  </div>
+
+  <!-- Zilean + Docker side by side -->
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+    <!-- Zilean -->
+    <div class="card rounded-xl p-5">
+      <h2 class="font-semibold mb-4">Zilean</h2>
+      <div id="zilean-status" class="space-y-3">
+        <p class="text-gray-600 text-sm text-center py-4">Loading…</p>
+      </div>
+    </div>
+    <!-- Docker containers -->
+    <div class="lg:col-span-2 card rounded-xl overflow-hidden">
+      <div class="px-5 py-3 border-b border-gray-800">
+        <h2 class="font-semibold">Docker Containers</h2>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="text-xs uppercase text-gray-500" style="background:#1a2030">
+            <tr>
+              <th class="px-4 py-2 text-left">Name</th>
+              <th class="px-4 py-2 text-left">Image</th>
+              <th class="px-4 py-2 text-left">State</th>
+              <th class="px-4 py-2 text-left">Status</th>
+            </tr>
+          </thead>
+          <tbody id="docker-table" class="divide-y divide-gray-800">
+            <tr><td colspan="4" class="px-4 py-6 text-center text-gray-600">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
 
 </main>
 
 <script>
-// ─── Colour pool ────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════
+// Shared utilities
+// ════════════════════════════════════════════════════════════════════════════
+
 const PALETTE = ['#E5A00D','#3B82F6','#10B981','#EF4444','#8B5CF6',
                  '#F59E0B','#06B6D4','#EC4899','#84CC16','#F97316'];
 const colourOf = (() => {
@@ -187,13 +466,17 @@ const colourOf = (() => {
   return u => (map[u] = map[u] ?? PALETTE[i++ % PALETTE.length]);
 })();
 
-// ─── Formatters ─────────────────────────────────────────────────────────────
 const esc = s => String(s)
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
 function fmtBw(kbps) {
   if (!kbps) return '0 kbps';
   return kbps >= 1000 ? (kbps/1000).toFixed(1)+' Mbps' : kbps+' kbps';
+}
+
+function fmtMbps(mbps) {
+  if (mbps === null || mbps === undefined) return '—';
+  return mbps.toFixed(2) + ' Mbps';
 }
 
 function fmtMs(ms) {
@@ -213,104 +496,264 @@ function timeAgo(iso) {
   return Math.floor(d/86400)+'d ago';
 }
 
+function fmtDate(iso) {
+  if (!iso) return '—';
+  return new Date(iso.endsWith('Z') ? iso : iso + 'Z').toLocaleDateString();
+}
+
+function fmtUnixDate(ts) {
+  if (!ts) return '—';
+  return new Date(ts * 1000).toLocaleDateString();
+}
+
 const STATE_ICON  = {playing:'▶',paused:'⏸',buffering:'⏳'};
 const STATE_COLOR = {playing:'text-green-400',paused:'text-yellow-400',buffering:'text-blue-400'};
-const MEDIA_ICON  = {episode:'📺',movie:'🎬',track:'🎵',clip:'🎞️'};
+const MEDIA_ICON  = {episode:'📺',movie:'🎬',track:'🎵',clip:'🎞️',show:'📺',season:'📺'};
 const TC_CLASS    = {
   direct:    'bg-green-900/50 text-green-300',
   copy:      'bg-blue-900/50 text-blue-300',
   transcode: 'bg-red-900/50 text-red-300',
 };
+const LIB_ICON = { movie:'🎬', show:'📺', artist:'🎵', photo:'🖼️' };
+const CAT_COLOR = {
+  Wanted:'text-yellow-400', Upgrading:'text-blue-400', Checking:'text-cyan-400',
+  Downloading:'text-purple-400', Completed:'text-green-400', Failed:'text-red-400', Other:'text-gray-400',
+};
 
-// ─── Status dot ─────────────────────────────────────────────────────────────
+// Status dot
 function setStatus(ok, msg) {
   document.getElementById('dot').style.background = ok ? '#22c55e' : '#ef4444';
   document.getElementById('conn-status').textContent = msg;
 }
 
-// ─── Sessions ────────────────────────────────────────────────────────────────
-async function loadSessions() {
-  const res  = await fetch('/api/sessions');
-  const data = await res.json();
-
-  const grid = document.getElementById('sessions-grid');
-  const sessions = data.sessions || [];
-
-  document.getElementById('chip-streams').textContent = sessions.length;
-  document.getElementById('session-count').textContent =
-    sessions.length + ' stream' + (sessions.length !== 1 ? 's' : '');
-  const totalBw = sessions.reduce((s,x)=>s+(x.bandwidth_kbps||0),0);
-  document.getElementById('chip-bw').textContent = fmtBw(totalBw);
-
-  if (data.error) {
-    setStatus(false, 'Plex error');
-    grid.innerHTML = `<div class="col-span-full rounded-lg p-4 text-red-400 text-sm"
-      style="background:#2a1010;border:1px solid #7f1d1d">
-      <b>Plex error:</b> ${esc(data.error)}</div>`;
-    return;
-  }
-  setStatus(true, 'Connected');
-
-  if (!sessions.length) {
-    grid.innerHTML = `<div class="col-span-full text-center py-12 text-gray-600 text-sm">
-      No active streams</div>`;
-    return;
-  }
-
-  grid.innerHTML = sessions.map(s => {
-    const c    = colourOf(s.user);
-    const disp = s.show_title ? `${s.show_title}: ${s.title}` : s.title;
-    return `
-    <div class="card rounded-xl p-4" style="transition:box-shadow .2s"
-         onmouseenter="this.style.boxShadow='0 4px 24px ${c}30'"
-         onmouseleave="this.style.boxShadow=''">
-      <!-- user row -->
-      <div class="flex items-start justify-between mb-3">
-        <div class="flex items-center gap-2">
-          <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-black flex-shrink-0"
-               style="background:${c}">${esc(s.user[0].toUpperCase())}</div>
-          <div>
-            <p class="text-sm font-medium text-white leading-tight">${esc(s.user)}</p>
-            <p class="text-xs text-gray-500">${esc(s.platform||'—')} · ${esc(s.player||'—')}</p>
-          </div>
-        </div>
-        <span class="text-lg ${STATE_COLOR[s.state]||'text-gray-400'}">
-          ${STATE_ICON[s.state]||'⏹'}
-        </span>
-      </div>
-
-      <!-- title -->
-      <p class="text-sm font-medium text-white mb-0.5 leading-snug">
-        ${MEDIA_ICON[s.media_type]||'▶'} ${esc(disp)}</p>
-      ${s.year ? `<p class="text-xs text-gray-500 mb-3">${s.year}</p>` : '<div class="mb-3"></div>'}
-
-      <!-- progress -->
-      <div class="mb-3">
-        <div class="flex justify-between text-xs text-gray-500 mb-1">
-          <span>${fmtMs(s.view_offset_ms)}</span>
-          <span>${s.progress}%</span>
-          <span>${fmtMs(s.duration_ms)}</span>
-        </div>
-        <div class="h-1.5 rounded-full overflow-hidden" style="background:#2a3040">
-          <div class="h-full rounded-full progress-fill" style="width:${s.progress}%;background:${c}"></div>
-        </div>
-      </div>
-
-      <!-- footer -->
-      <div class="flex items-center justify-between text-xs">
-        <span class="px-1.5 py-0.5 rounded ${TC_CLASS[s.transcode_decision]||'bg-gray-800 text-gray-400'}">
-          ${esc(s.transcode_decision||'direct')}</span>
-        <span class="text-gray-400">
-          ${fmtBw(s.bandwidth_kbps)}
-          ${s.location ? `<span class="text-gray-600"> · ${esc(s.location)}</span>` : ''}
-        </span>
-      </div>
-    </div>`;
-  }).join('');
+// Gauge helper
+function setGauge(id, pct) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const clamped = Math.min(100, Math.max(0, pct || 0));
+  el.setAttribute('stroke-dasharray', `${clamped} ${100 - clamped}`);
 }
 
-// ─── Bandwidth chart ──────────────────────────────────────────────────────────
-let bwChart = null, currentHours = 6;
+// Chart registry — destroy before recreating
+const charts = {};
+function destroyChart(key) {
+  if (charts[key]) { charts[key].destroy(); delete charts[key]; }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Tab management
+// ════════════════════════════════════════════════════════════════════════════
+
+const TAB_NAMES = ['live','analytics','library','queue','system'];
+const _loaded   = {};  // which tabs have been loaded at least once
+let   _activeTab = 'live';
+
+function switchTab(name) {
+  _activeTab = name;
+  TAB_NAMES.forEach(t => {
+    document.getElementById('panel-'+t).classList.toggle('active', t === name);
+    const btn = document.getElementById('tab-'+t);
+    btn.classList.toggle('active', t === name);
+    btn.style.color = t === name ? '#E5A00D' : '';
+  });
+  if (!_loaded[name]) {
+    _loaded[name] = true;
+    _loadTab(name);
+  }
+}
+
+function _loadTab(name) {
+  if (name === 'live')      loadLive();
+  if (name === 'analytics') loadAnalytics();
+  if (name === 'library')   loadLibrary();
+  if (name === 'queue')     loadQueue();
+  if (name === 'system')    loadSystem();
+}
+
+function refreshActiveTab() {
+  document.getElementById('last-updated').textContent = 'Refreshing…';
+  _loadTab(_activeTab);
+  document.getElementById('last-updated').textContent =
+    'Updated ' + new Date().toLocaleTimeString();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// TAB 1 — LIVE
+// ════════════════════════════════════════════════════════════════════════════
+
+async function loadLive() {
+  await Promise.allSettled([
+    loadSessions(),
+    loadBandwidth(currentHours),
+    loadStats(),
+    loadHistory(),
+  ]);
+}
+
+async function loadSessions() {
+  try {
+    const res      = await fetch('/api/sessions');
+    const data     = await res.json();
+    const grid     = document.getElementById('sessions-grid');
+    const sessions = data.sessions || [];
+
+    document.getElementById('chip-streams').textContent = sessions.length;
+    document.getElementById('session-count').textContent =
+      sessions.length + ' stream' + (sessions.length !== 1 ? 's' : '');
+    const totalBw = sessions.reduce((s,x)=>s+(x.bandwidth_kbps||0),0);
+    document.getElementById('chip-bw').textContent = fmtBw(totalBw);
+
+    if (data.error) {
+      setStatus(false, 'Plex error');
+      grid.innerHTML = `<div class="col-span-full rounded-lg p-4 text-red-400 text-sm"
+        style="background:#2a1010;border:1px solid #7f1d1d">
+        <b>Plex error:</b> ${esc(data.error)}</div>`;
+      return;
+    }
+    setStatus(true, 'Connected');
+
+    if (!sessions.length) {
+      grid.innerHTML = `<div class="col-span-full text-center py-12 text-gray-600 text-sm">
+        No active streams</div>`;
+      return;
+    }
+
+    grid.innerHTML = sessions.map(s => {
+      const c    = colourOf(s.user);
+      const disp = s.show_title ? `${s.show_title}: ${s.title}` : s.title;
+      return `
+      <div class="card rounded-xl p-4" style="transition:box-shadow .2s"
+           onmouseenter="this.style.boxShadow='0 4px 24px ${c}30'"
+           onmouseleave="this.style.boxShadow=''">
+        <div class="flex items-start justify-between mb-3">
+          <div class="flex items-center gap-2">
+            <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-black flex-shrink-0"
+                 style="background:${c}">${esc(s.user[0].toUpperCase())}</div>
+            <div>
+              <p class="text-sm font-medium text-white leading-tight">${esc(s.user)}</p>
+              <p class="text-xs text-gray-500">${esc(s.platform||'—')} · ${esc(s.player||'—')}</p>
+            </div>
+          </div>
+          <span class="text-lg ${STATE_COLOR[s.state]||'text-gray-400'}">${STATE_ICON[s.state]||'⏹'}</span>
+        </div>
+        <p class="text-sm font-medium text-white mb-0.5 leading-snug">
+          ${MEDIA_ICON[s.media_type]||'▶'} ${esc(disp)}</p>
+        ${s.year ? `<p class="text-xs text-gray-500 mb-3">${s.year}</p>` : '<div class="mb-3"></div>'}
+        <div class="mb-3">
+          <div class="flex justify-between text-xs text-gray-500 mb-1">
+            <span>${fmtMs(s.view_offset_ms)}</span>
+            <span>${s.progress}%</span>
+            <span>${fmtMs(s.duration_ms)}</span>
+          </div>
+          <div class="h-1.5 rounded-full overflow-hidden" style="background:#2a3040">
+            <div class="h-full rounded-full progress-fill" style="width:${s.progress}%;background:${c}"></div>
+          </div>
+        </div>
+        <div class="flex items-center justify-between text-xs">
+          <span class="px-1.5 py-0.5 rounded ${TC_CLASS[s.transcode_decision]||'bg-gray-800 text-gray-400'}">
+            ${esc(s.transcode_decision||'direct')}</span>
+          <span class="text-gray-400">
+            ${fmtBw(s.bandwidth_kbps)}
+            ${s.location ? `<span class="text-gray-600"> · ${esc(s.location)}</span>` : ''}
+          </span>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    setStatus(false, 'Error');
+    console.error(e);
+  }
+}
+
+async function loadStats() {
+  try {
+    const res = await fetch('/api/stats');
+    const d   = await res.json();
+    document.getElementById('chip-total').textContent = d.total_sessions;
+    const tb = document.getElementById('stats-table');
+    if (!d.user_stats.length) {
+      tb.innerHTML = '<tr><td colspan="5" class="px-4 py-6 text-center text-gray-600">No data yet</td></tr>';
+      return;
+    }
+    tb.innerHTML = d.user_stats.map(u => {
+      const c = colourOf(u.user);
+      return `
+      <tr class="table-row transition-colors">
+        <td class="px-4 py-3">
+          <div class="flex items-center gap-2">
+            <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-black flex-shrink-0"
+                 style="background:${c}">${esc(u.user[0].toUpperCase())}</div>
+            <span>${esc(u.user)}</span>
+          </div>
+        </td>
+        <td class="px-4 py-3 text-right">${u.total_sessions}</td>
+        <td class="px-4 py-3 text-right text-blue-300">${fmtBw(u.avg_bw_kbps)}</td>
+        <td class="px-4 py-3 text-right text-orange-300">${fmtBw(u.peak_bw_kbps)}</td>
+        <td class="px-4 py-3 text-right text-gray-500">${timeAgo(u.last_seen)}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) { console.error(e); }
+}
+
+async function loadHistory() {
+  try {
+    const res = await fetch('/api/history');
+    const d   = await res.json();
+    const tb  = document.getElementById('history-table');
+    if (!d.history.length) {
+      tb.innerHTML = '<tr><td colspan="7" class="px-4 py-6 text-center text-gray-600">No history yet</td></tr>';
+      return;
+    }
+    tb.innerHTML = d.history.map(h => {
+      const c    = colourOf(h.user);
+      const disp = h.show_title ? `${h.show_title}: ${h.title}` : h.title;
+      return `
+      <tr class="table-row transition-colors">
+        <td class="px-4 py-3">
+          <div class="flex items-center gap-1.5">
+            <div class="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold text-black flex-shrink-0"
+                 style="background:${c}">${esc(h.user[0].toUpperCase())}</div>
+            <span class="text-sm">${esc(h.user)}</span>
+          </div>
+        </td>
+        <td class="px-4 py-3 max-w-xs">
+          <p class="text-sm text-white truncate">${MEDIA_ICON[h.media_type]||'▶'} ${esc(disp)}</p>
+        </td>
+        <td class="px-4 py-3 text-sm text-gray-400">${esc(h.platform||'—')}</td>
+        <td class="px-4 py-3">
+          <div class="flex items-center gap-2">
+            <div class="w-14 h-1.5 rounded-full overflow-hidden" style="background:#2a3040">
+              <div class="h-full rounded-full" style="width:${Math.min(100,h.progress_percent||0)}%;background:${c}"></div>
+            </div>
+            <span class="text-xs text-gray-500">${(h.progress_percent||0).toFixed(0)}%</span>
+          </div>
+        </td>
+        <td class="px-4 py-3 text-right text-sm text-gray-400">${fmtBw(h.bandwidth_kbps)}</td>
+        <td class="px-4 py-3">
+          <span class="px-1.5 py-0.5 rounded text-xs ${TC_CLASS[h.transcode_decision]||'bg-gray-800 text-gray-400'}">
+            ${esc(h.transcode_decision||'direct')}</span>
+        </td>
+        <td class="px-4 py-3 text-right text-sm text-gray-500">${timeAgo(h.last_seen)}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) { console.error(e); }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// TAB 2 — ANALYTICS
+// ════════════════════════════════════════════════════════════════════════════
+
+let currentHours = 6;
+let bwChart = null;
+
+async function loadAnalytics() {
+  await Promise.allSettled([
+    loadBandwidth(currentHours),
+    loadPeaks(),
+    loadTopContent(),
+    loadMonthlyUsers(),
+  ]);
+}
 
 async function loadBandwidth(h = 6) {
   currentHours = h;
@@ -329,18 +772,17 @@ async function loadBandwidth(h = 6) {
 function renderBwChart(rows) {
   const empty = document.getElementById('bw-empty');
   if (!rows.length) {
-    empty.classList.replace('hidden','flex');
+    if (empty) empty.classList.replace('hidden','flex');
     if (bwChart) { bwChart.data.datasets=[]; bwChart.update(); }
     return;
   }
-  empty.classList.replace('flex','hidden');
+  if (empty) empty.classList.replace('flex','hidden');
 
-  // group by user
   const byUser = {};
   rows.forEach(r => {
     (byUser[r.user] = byUser[r.user]||[]).push({
       x: r.bucket,
-      y: Math.round(r.avg_bw_kbps / 100) / 10   // kbps → Mbps, 1dp
+      y: Math.round(r.avg_bw_kbps / 100) / 10
     });
   });
 
@@ -379,167 +821,498 @@ function renderBwChart(rows) {
   });
 }
 
-// ─── Debrid ───────────────────────────────────────────────────────────────────
-async function loadDebrid() {
-  const box = document.getElementById('debrid-list');
+async function loadPeaks() {
   try {
-    const res  = await fetch('/api/debrid');
-    const data = await res.json();
-    renderDebrid(data, box);
-  } catch(e) {
-    box.innerHTML = `<p class="text-red-400 text-sm text-center">Request failed</p>`;
-    document.getElementById('chip-queue').textContent = '—';
-  }
+    const res  = await fetch('/api/peaks');
+    const data = (await res.json()).data || [];
+    const labels = data.map(r => r.hour + ':00');
+    const counts = data.map(r => r.stream_count);
+
+    destroyChart('peaks');
+    charts['peaks'] = new Chart(document.getElementById('peaks-chart'), {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Streams',
+          data: counts,
+          backgroundColor: '#E5A00D55',
+          borderColor: '#E5A00D',
+          borderWidth: 1,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { color:'#232a3a' }, ticks: { color:'#4b5563' } },
+          y: { beginAtZero: true, grid: { color:'#232a3a' }, ticks: { color:'#4b5563', stepSize:1 } },
+        },
+      },
+    });
+  } catch(e) { console.error(e); }
 }
 
-function renderDebrid(data, box) {
-  if (data.error) {
-    box.innerHTML = `
-      <div class="text-center py-4">
-        <p class="text-yellow-400 text-sm">cli_debrid unreachable</p>
-        <p class="text-gray-600 text-xs mt-1">${esc(data.url)}</p>
-        <p class="text-gray-600 text-xs mt-1">${esc(data.error)}</p>
-      </div>`;
-    document.getElementById('chip-queue').textContent = '—';
-    return;
-  }
+async function loadTopContent() {
+  try {
+    const res  = await fetch('/api/content/top?days=30');
+    const data = (await res.json()).data || [];
+    if (!data.length) return;
 
-  // Hunt for an array of queue/download items in any endpoint response
-  let items = null;
-  for (const payload of Object.values(data.endpoints||{})) {
-    if (Array.isArray(payload)) { items = payload; break; }
-    if (payload && typeof payload === 'object') {
-      for (const key of ['queue','downloads','items','data','torrents','results']) {
-        if (Array.isArray(payload[key])) { items = payload[key]; break; }
-      }
-      if (items) break;
-    }
-  }
+    const labels = data.map(r => r.show_title ? `${r.show_title}: ${r.title}` : r.title);
+    const counts = data.map(r => r.play_count);
 
-  if (!items) {
-    // Show raw so the user can see what the API returns
-    const raw = JSON.stringify(data.endpoints, null, 2).slice(0, 800);
-    document.getElementById('chip-queue').textContent = '?';
-    box.innerHTML = `
-      <p class="text-xs text-gray-500 mb-1">Raw API response (adapt endpoint handling as needed):</p>
-      <pre class="text-xs text-gray-500 overflow-auto whitespace-pre-wrap">${esc(raw)}</pre>`;
-    return;
-  }
-
-  document.getElementById('chip-queue').textContent = items.length;
-  if (!items.length) {
-    box.innerHTML = '<p class="text-gray-600 text-sm text-center py-6">Queue is empty</p>';
-    return;
-  }
-
-  box.innerHTML = items.slice(0, 30).map(item => {
-    const name   = item.name || item.filename || item.title || item.id || 'Unknown';
-    const status = item.status || item.state || '';
-    const pct    = item.progress ?? item.percent ?? item.percentage ?? null;
-    return `
-    <div class="rounded-lg p-2.5 text-xs" style="background:#1e2535">
-      <p class="text-gray-200 font-medium truncate" title="${esc(name)}">${esc(name)}</p>
-      ${status ? `<p class="text-gray-500 mt-0.5">${esc(status)}</p>` : ''}
-      ${pct !== null ? `
-        <div class="mt-1.5 h-1 rounded-full overflow-hidden" style="background:#2a3040">
-          <div class="h-full bg-purple-500 rounded-full" style="width:${Math.min(100,+pct)}%"></div>
-        </div>` : ''}
-    </div>`;
-  }).join('');
+    destroyChart('top');
+    charts['top'] = new Chart(document.getElementById('top-content-chart'), {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Plays',
+          data: counts,
+          backgroundColor: PALETTE.slice(0,10).map(c => c+'99'),
+          borderColor:     PALETTE.slice(0,10),
+          borderWidth: 1,
+        }],
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { beginAtZero: true, grid: { color:'#232a3a' }, ticks: { color:'#4b5563', stepSize:1 } },
+          y: { grid: { color:'#232a3a' }, ticks: { color:'#9ca3af', font:{ size:11 } } },
+        },
+      },
+    });
+  } catch(e) { console.error(e); }
 }
 
-// ─── Stats table ──────────────────────────────────────────────────────────────
-async function loadStats() {
+async function loadMonthlyUsers() {
   try {
-    const res = await fetch('/api/stats');
-    const d   = await res.json();
-    document.getElementById('chip-total').textContent = d.total_sessions;
-    const tb = document.getElementById('stats-table');
-    if (!d.user_stats.length) {
-      tb.innerHTML = '<tr><td colspan="5" class="px-4 py-6 text-center text-gray-600">No data yet</td></tr>';
+    const res  = await fetch('/api/users/month');
+    const data = (await res.json()).data || [];
+    const tb   = document.getElementById('month-table');
+    if (!data.length) {
+      tb.innerHTML = '<tr><td colspan="3" class="px-4 py-6 text-center text-gray-600">No data this month</td></tr>';
       return;
     }
-    tb.innerHTML = d.user_stats.map(u => {
+    tb.innerHTML = data.map(u => {
       const c = colourOf(u.user);
       return `
       <tr class="table-row transition-colors">
         <td class="px-4 py-3">
           <div class="flex items-center gap-2">
-            <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-black flex-shrink-0"
+            <div class="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold text-black flex-shrink-0"
                  style="background:${c}">${esc(u.user[0].toUpperCase())}</div>
             <span>${esc(u.user)}</span>
           </div>
         </td>
-        <td class="px-4 py-3 text-right">${u.total_sessions}</td>
-        <td class="px-4 py-3 text-right text-blue-300">${fmtBw(u.avg_bw_kbps)}</td>
-        <td class="px-4 py-3 text-right text-orange-300">${fmtBw(u.peak_bw_kbps)}</td>
-        <td class="px-4 py-3 text-right text-gray-500">${timeAgo(u.last_seen)}</td>
+        <td class="px-4 py-3 text-right text-gray-400">${u.sessions}</td>
+        <td class="px-4 py-3 text-right text-blue-300">${(u.approx_mb/1024).toFixed(1)} GB</td>
       </tr>`;
     }).join('');
   } catch(e) { console.error(e); }
 }
 
-// ─── History table ────────────────────────────────────────────────────────────
-async function loadHistory() {
+// ════════════════════════════════════════════════════════════════════════════
+// TAB 3 — LIBRARY
+// ════════════════════════════════════════════════════════════════════════════
+
+async function loadLibrary() {
+  await Promise.allSettled([
+    loadPlexLibraries(),
+    loadTranscodeStats(),
+    loadRdUsage(),
+  ]);
+}
+
+async function loadPlexLibraries() {
   try {
-    const res = await fetch('/api/history');
-    const d   = await res.json();
-    const tb  = document.getElementById('history-table');
-    if (!d.history.length) {
-      tb.innerHTML = '<tr><td colspan="7" class="px-4 py-6 text-center text-gray-600">No history yet</td></tr>';
+    const res  = await fetch('/api/plex/libraries');
+    const data = await res.json();
+
+    // Library cards
+    const grid = document.getElementById('library-cards');
+    if (!data.libraries.length) {
+      grid.innerHTML = `<div class="col-span-full text-center py-8 text-gray-600 text-sm">
+        ${data.error ? esc(data.error) : 'No libraries found'}</div>`;
+    } else {
+      grid.innerHTML = data.libraries.map(lib => `
+        <div class="card rounded-xl p-4 flex items-center gap-3">
+          <span class="text-2xl">${LIB_ICON[lib.type]||'📁'}</span>
+          <div class="min-w-0">
+            <p class="text-sm font-medium text-white truncate">${esc(lib.title)}</p>
+            <p class="text-2xl font-bold text-plex mt-0.5">${lib.count.toLocaleString()}</p>
+          </div>
+        </div>`
+      ).join('');
+    }
+
+    // Recent additions
+    const list = document.getElementById('recent-list');
+    if (!data.recent.length) {
+      list.innerHTML = '<p class="px-5 py-6 text-center text-gray-600 text-sm">No recent additions</p>';
+    } else {
+      list.innerHTML = data.recent.map(item => {
+        const disp = item.show_title ? `${item.show_title}: ${item.title}` : item.title;
+        return `
+        <div class="px-5 py-3 flex items-center gap-3 hover:bg-white/5 transition-colors">
+          <span class="text-lg w-6 text-center">${MEDIA_ICON[item.type]||'▶'}</span>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm text-white truncate">${esc(disp)}${item.year?' <span class="text-gray-600">('+item.year+')</span>':''}</p>
+            <p class="text-xs text-gray-500">${esc(item.library)}</p>
+          </div>
+          <span class="text-xs text-gray-600 flex-shrink-0">${fmtUnixDate(item.addedAt)}</span>
+        </div>`;
+      }).join('');
+    }
+  } catch(e) { console.error(e); }
+}
+
+async function loadTranscodeStats() {
+  try {
+    const res  = await fetch('/api/transcode/stats');
+    const data = await res.json();
+    const rows = data.all_time || [];
+    if (!rows.length) return;
+
+    const TC_COLORS = {
+      direct:    '#10B981',
+      copy:      '#3B82F6',
+      transcode: '#EF4444',
+    };
+
+    destroyChart('transcode');
+    charts['transcode'] = new Chart(document.getElementById('transcode-chart'), {
+      type: 'doughnut',
+      data: {
+        labels: rows.map(r => r.transcode_decision),
+        datasets: [{
+          data: rows.map(r => r.count),
+          backgroundColor: rows.map(r => (TC_COLORS[r.transcode_decision]||'#6b7280')+'cc'),
+          borderColor:     rows.map(r => TC_COLORS[r.transcode_decision]||'#6b7280'),
+          borderWidth: 2,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'bottom', labels: { color:'#9ca3af', padding:16 } },
+        },
+        cutout: '65%',
+      },
+    });
+  } catch(e) { console.error(e); }
+}
+
+async function loadRdUsage() {
+  try {
+    const res  = await fetch('/api/rd/usage?days=30');
+    const json = await res.json();
+
+    if (!json.has_token) {
+      document.getElementById('rd-notoken').classList.replace('hidden','flex');
       return;
     }
-    tb.innerHTML = d.history.map(h => {
-      const c    = colourOf(h.user);
-      const disp = h.show_title ? `${h.show_title}: ${h.title}` : h.title;
-      return `
-      <tr class="table-row transition-colors">
-        <td class="px-4 py-3">
-          <div class="flex items-center gap-1.5">
-            <div class="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold text-black flex-shrink-0"
-                 style="background:${c}">${esc(h.user[0].toUpperCase())}</div>
-            <span class="text-sm">${esc(h.user)}</span>
-          </div>
-        </td>
-        <td class="px-4 py-3 max-w-xs">
-          <p class="text-sm text-white truncate">
-            ${MEDIA_ICON[h.media_type]||'▶'} ${esc(disp)}</p>
-        </td>
-        <td class="px-4 py-3 text-sm text-gray-400">${esc(h.platform||'—')}</td>
-        <td class="px-4 py-3">
-          <div class="flex items-center gap-2">
-            <div class="w-14 h-1.5 rounded-full overflow-hidden" style="background:#2a3040">
-              <div class="h-full rounded-full" style="width:${Math.min(100,h.progress_percent||0)}%;background:${c}"></div>
-            </div>
-            <span class="text-xs text-gray-500">${(h.progress_percent||0).toFixed(0)}%</span>
-          </div>
-        </td>
-        <td class="px-4 py-3 text-right text-sm text-gray-400">${fmtBw(h.bandwidth_kbps)}</td>
-        <td class="px-4 py-3">
-          <span class="px-1.5 py-0.5 rounded text-xs ${TC_CLASS[h.transcode_decision]||'bg-gray-800 text-gray-400'}">
-            ${esc(h.transcode_decision||'direct')}</span>
-        </td>
-        <td class="px-4 py-3 text-right text-sm text-gray-500">${timeAgo(h.last_seen)}</td>
-      </tr>`;
-    }).join('');
+
+    const data = json.data || [];
+    if (!data.length) return;
+
+    destroyChart('rd');
+    charts['rd'] = new Chart(document.getElementById('rd-chart'), {
+      type: 'bar',
+      data: {
+        labels: data.map(r => r.date),
+        datasets: [{
+          label: 'Downloaded (GB)',
+          data: data.map(r => r.downloaded_gb),
+          backgroundColor: '#8B5CF699',
+          borderColor: '#8B5CF6',
+          borderWidth: 1,
+          yAxisID: 'y',
+        }, {
+          label: 'Streams',
+          data: data.map(r => r.streams),
+          backgroundColor: '#E5A00D55',
+          borderColor: '#E5A00D',
+          borderWidth: 1,
+          type: 'line',
+          yAxisID: 'y1',
+          tension: 0.3,
+          pointRadius: 2,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { color:'#9ca3af' } } },
+        scales: {
+          x: { grid: { color:'#232a3a' }, ticks: { color:'#4b5563', maxTicksLimit:10 } },
+          y: {
+            beginAtZero: true, grid: { color:'#232a3a' },
+            ticks: { color:'#4b5563', callback: v => v+'GB' },
+          },
+          y1: {
+            beginAtZero: true, position: 'right',
+            grid: { drawOnChartArea: false },
+            ticks: { color:'#E5A00D', stepSize: 1 },
+          },
+        },
+      },
+    });
   } catch(e) { console.error(e); }
 }
 
-// ─── Orchestration ────────────────────────────────────────────────────────────
-async function refreshAll() {
-  document.getElementById('last-updated').textContent = 'Refreshing…';
-  await Promise.allSettled([
-    loadSessions(),
-    loadBandwidth(currentHours),
-    loadDebrid(),
-    loadStats(),
-    loadHistory(),
-  ]);
-  document.getElementById('last-updated').textContent =
-    'Updated ' + new Date().toLocaleTimeString();
+// ════════════════════════════════════════════════════════════════════════════
+// TAB 4 — QUEUE
+// ════════════════════════════════════════════════════════════════════════════
+
+let currentCategory = 'all';
+let _allDebridData  = null;
+
+async function loadQueue() {
+  const grid = document.getElementById('queue-grid');
+  grid.innerHTML = '<div class="col-span-full text-center py-10 text-gray-600 text-sm">Loading…</div>';
+  try {
+    const res  = await fetch('/api/debrid');
+    const data = await res.json();
+    _allDebridData = data;
+
+    // Update chip in Live tab
+    document.getElementById('chip-queue').textContent = data.total ?? '—';
+
+    // Update category count badges
+    const counts = data.counts || {};
+    const total  = data.total || 0;
+    document.getElementById('cnt-all').textContent = total;
+    for (const cat of ['Wanted','Upgrading','Checking','Downloading','Completed','Failed']) {
+      const el = document.getElementById('cnt-'+cat);
+      if (el) el.textContent = counts[cat] || 0;
+    }
+
+    renderQueueItems(currentCategory);
+  } catch(e) {
+    document.getElementById('queue-grid').innerHTML =
+      '<div class="col-span-full text-center py-10 text-red-400 text-sm">Failed to load queue</div>';
+    console.error(e);
+  }
 }
 
-// Init button styles
+function filterQueue(cat) {
+  currentCategory = cat;
+  document.querySelectorAll('.cat-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.cat === cat);
+  });
+  if (_allDebridData) renderQueueItems(cat);
+}
+
+function renderQueueItems(cat) {
+  const grid = document.getElementById('queue-grid');
+  const data = _allDebridData;
+
+  if (data.error && !data.items.length) {
+    grid.innerHTML = `<div class="col-span-full text-center py-10 text-yellow-400 text-sm">
+      cli_debrid unreachable: ${esc(data.error)}</div>`;
+    return;
+  }
+
+  let items;
+  if (cat === 'all') {
+    items = data.items || [];
+  } else {
+    items = (data.categories || {})[cat] || [];
+  }
+
+  if (!items.length) {
+    grid.innerHTML = `<div class="col-span-full text-center py-10 text-gray-600 text-sm">
+      No items${cat !== 'all' ? ' in '+cat : ''}</div>`;
+    return;
+  }
+
+  const catColor = CAT_COLOR[cat] || 'text-gray-400';
+
+  grid.innerHTML = items.slice(0, 60).map(item => {
+    const name   = item.name || item.filename || item.title || item.id || 'Unknown';
+    const status = item.status || item.state || '';
+    const pct    = item.progress ?? item.percent ?? item.percentage ?? null;
+    const sc     = CAT_COLOR[_categorise(status)] || 'text-gray-400';
+    return `
+    <div class="card rounded-xl p-3">
+      <p class="text-sm text-white font-medium truncate mb-1" title="${esc(name)}">${esc(name)}</p>
+      ${status ? `<p class="text-xs ${sc} mb-1">${esc(status)}</p>` : ''}
+      ${pct !== null ? `
+        <div class="mt-1 h-1.5 rounded-full overflow-hidden" style="background:#2a3040">
+          <div class="h-full bg-purple-500 rounded-full progress-fill" style="width:${Math.min(100,+pct)}%"></div>
+        </div>
+        <p class="text-xs text-gray-600 mt-0.5 text-right">${(+pct).toFixed(0)}%</p>
+      ` : ''}
+    </div>`;
+  }).join('');
+}
+
+function _categorise(status) {
+  const s = (status||'').toLowerCase();
+  if ('want' in s || s.includes('want'))     return 'Wanted';
+  if (s.includes('upgrad'))  return 'Upgrading';
+  if (s.includes('check') || s.includes('scraping')) return 'Checking';
+  if (s.includes('download')) return 'Downloading';
+  if (s.includes('complet') || s.includes('symlink')) return 'Completed';
+  if (s.includes('fail') || s.includes('error')) return 'Failed';
+  return 'Other';
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// TAB 5 — SYSTEM
+// ════════════════════════════════════════════════════════════════════════════
+
+async function loadSystem() {
+  await Promise.allSettled([
+    loadSystemCurrent(),
+    loadSystemHistory(),
+    loadZilean(),
+    loadDocker(),
+  ]);
+}
+
+async function loadSystemCurrent() {
+  try {
+    const res  = await fetch('/api/system/current');
+    const data = await res.json();
+
+    setGauge('gauge-cpu', data.cpu_pct);
+    document.getElementById('val-cpu').textContent = (data.cpu_pct||0).toFixed(0)+'%';
+
+    setGauge('gauge-ram', data.ram_pct);
+    document.getElementById('val-ram').textContent = (data.ram_used_gb||0).toFixed(1)+' GB';
+    document.getElementById('val-ram-total').textContent = '/ '+(data.ram_total_gb||0).toFixed(0)+' GB';
+
+    setGauge('gauge-disk', data.disk_pct);
+    document.getElementById('val-disk').textContent = (data.disk_pct||0).toFixed(0)+'%';
+
+    if (data.temp_c !== null && data.temp_c !== undefined) {
+      const tempPct = Math.min(100, (data.temp_c / 100) * 100);
+      setGauge('gauge-temp', tempPct);
+      document.getElementById('val-temp').textContent = data.temp_c.toFixed(1)+'°C';
+    } else {
+      document.getElementById('val-temp').textContent = 'N/A';
+    }
+
+    document.getElementById('val-rx').textContent = fmtMbps(data.net_rx_mbps);
+    document.getElementById('val-tx').textContent = fmtMbps(data.net_tx_mbps);
+  } catch(e) { console.error(e); }
+}
+
+async function loadSystemHistory() {
+  try {
+    const res  = await fetch('/api/system/history?hours=3');
+    const data = (await res.json()).data || [];
+    if (!data.length) return;
+
+    const labels = data.map(r => r.timestamp);
+    destroyChart('sysHistory');
+    charts['sysHistory'] = new Chart(document.getElementById('sys-history-chart'), {
+      type: 'line',
+      data: {
+        datasets: [{
+          label: 'CPU %',
+          data: data.map(r => ({ x: r.timestamp, y: r.cpu_pct })),
+          borderColor: '#E5A00D',
+          backgroundColor: '#E5A00D22',
+          fill: true, tension: 0.3, pointRadius: 1, borderWidth: 2,
+        }, {
+          label: 'RAM %',
+          data: data.map(r => ({ x: r.timestamp, y: r.ram_pct })),
+          borderColor: '#3B82F6',
+          backgroundColor: '#3B82F622',
+          fill: true, tension: 0.3, pointRadius: 1, borderWidth: 2,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { intersect: false, mode: 'index' },
+        plugins: { legend: { labels: { color:'#9ca3af' } } },
+        scales: {
+          x: {
+            type: 'time',
+            time: { tooltipFormat:'HH:mm', displayFormats:{ minute:'HH:mm' } },
+            grid: { color:'#232a3a' }, ticks: { color:'#4b5563', maxTicksLimit:8 },
+          },
+          y: {
+            min: 0, max: 100,
+            grid: { color:'#232a3a' },
+            ticks: { color:'#4b5563', callback: v => v+'%' },
+          },
+        },
+      },
+    });
+  } catch(e) { console.error(e); }
+}
+
+async function loadZilean() {
+  const box = document.getElementById('zilean-status');
+  try {
+    const res  = await fetch('/api/zilean');
+    const data = await res.json();
+    box.innerHTML = `
+      <div class="flex items-center gap-2">
+        <span class="w-3 h-3 rounded-full ${data.healthy ? 'bg-green-400' : 'bg-red-500'}"></span>
+        <span class="${data.healthy ? 'text-green-400' : 'text-red-400'} font-medium">
+          ${data.healthy ? 'Healthy' : 'Unreachable'}
+        </span>
+      </div>
+      ${data.torrent_count !== null && data.torrent_count !== undefined ? `
+        <div class="mt-3">
+          <p class="text-xs text-gray-500 uppercase tracking-widest">Indexed Torrents</p>
+          <p class="text-2xl font-bold text-purple-400 mt-0.5">
+            ${typeof data.torrent_count === 'object'
+                ? JSON.stringify(data.torrent_count)
+                : Number(data.torrent_count).toLocaleString()}</p>
+        </div>` : ''}
+      ${data.error ? `<p class="text-xs text-gray-600 mt-2">${esc(data.error)}</p>` : ''}`;
+  } catch(e) {
+    box.innerHTML = '<p class="text-red-400 text-sm text-center">Request failed</p>';
+  }
+}
+
+async function loadDocker() {
+  const tb = document.getElementById('docker-table');
+  try {
+    const res  = await fetch('/api/docker/containers');
+    const data = await res.json();
+
+    if (data.error) {
+      tb.innerHTML = `<tr><td colspan="4" class="px-4 py-6 text-center text-yellow-400 text-sm">${esc(data.error)}</td></tr>`;
+      return;
+    }
+    if (!data.containers.length) {
+      tb.innerHTML = '<tr><td colspan="4" class="px-4 py-6 text-center text-gray-600">No containers</td></tr>';
+      return;
+    }
+
+    const STATE_STYLE = {
+      running: 'text-green-400',
+      exited:  'text-red-400',
+      paused:  'text-yellow-400',
+    };
+
+    tb.innerHTML = data.containers.map(c => `
+      <tr class="table-row transition-colors">
+        <td class="px-4 py-2 font-medium text-white">${esc(c.name)}</td>
+        <td class="px-4 py-2 text-gray-400 text-xs max-w-xs truncate" title="${esc(c.image)}">${esc(c.image)}</td>
+        <td class="px-4 py-2 ${STATE_STYLE[c.state]||'text-gray-400'} font-medium">${esc(c.state)}</td>
+        <td class="px-4 py-2 text-gray-500 text-xs">${esc(c.status)}</td>
+      </tr>`).join('');
+  } catch(e) {
+    tb.innerHTML = '<tr><td colspan="4" class="px-4 py-6 text-center text-red-400 text-sm">Request failed</td></tr>';
+    console.error(e);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Init
+// ════════════════════════════════════════════════════════════════════════════
+
+// Style bandwidth buttons on load
 document.querySelectorAll('.bw-btn').forEach(b => {
   if (!b.classList.contains('btn-active')) {
     b.style.background = '#1e2535';
@@ -547,8 +1320,16 @@ document.querySelectorAll('.bw-btn').forEach(b => {
   }
 });
 
-refreshAll();
-setInterval(refreshAll, 30_000);
+// Mark first tab as loaded and load it
+_loaded['live'] = true;
+loadLive();
+
+// Auto-refresh active tab every 30s
+setInterval(() => {
+  refreshActiveTab();
+  document.getElementById('last-updated').textContent =
+    'Updated ' + new Date().toLocaleTimeString();
+}, 30_000);
 </script>
 </body>
 </html>

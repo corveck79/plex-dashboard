@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 
 import aiosqlite
 import httpx
+import psutil
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
@@ -15,16 +16,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-PLEX_URL = "http://192.168.1.101:32400"
-PLEX_TOKEN = "6eMBEX1VddA6wh5LZwFj"
-DEBRID_URL = "http://192.168.1.101:5500"
-DB_PATH = os.environ.get("DB_PATH", "plex_dashboard.db")
+PLEX_URL   = os.environ.get("PLEX_URL",   "http://192.168.1.101:32400")
+PLEX_TOKEN = os.environ.get("PLEX_TOKEN", "6eMBEX1VddA6wh5LZwFj")
+DEBRID_URL = os.environ.get("DEBRID_URL", "http://192.168.1.101:5500")
+DB_PATH    = os.environ.get("DB_PATH",    "plex_dashboard.db")
+RD_TOKEN   = os.environ.get("RD_TOKEN",   "")
+ZILEAN_URL = os.environ.get("ZILEAN_URL", "http://192.168.1.101:8181")
+DISK_PATH  = os.environ.get("DISK_PATH",  "/nas")
 POLL_INTERVAL = 30  # seconds
 
 PLEX_HEADERS = {
     "X-Plex-Token": PLEX_TOKEN,
     "Accept": "application/json",
 }
+
+# Module-level dict for network rate calculation
+_prev_net: dict = {}
 
 # ---------------------------------------------------------------------------
 # Database
@@ -59,6 +66,26 @@ async def init_db() -> None:
             );
 
             CREATE INDEX IF NOT EXISTS idx_bw_ts ON bandwidth_history(timestamp);
+
+            CREATE TABLE IF NOT EXISTS rd_daily_usage (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                date          TEXT NOT NULL UNIQUE,
+                downloaded_gb REAL DEFAULT 0,
+                streams       INTEGER DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS system_snapshots (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                cpu_pct     REAL DEFAULT 0,
+                ram_pct     REAL DEFAULT 0,
+                disk_pct    REAL DEFAULT 0,
+                net_rx_mbps REAL DEFAULT 0,
+                net_tx_mbps REAL DEFAULT 0,
+                temp_c      REAL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_sys_ts ON system_snapshots(timestamp);
         """)
         await db.commit()
     logger.info("Database ready: %s", DB_PATH)
@@ -117,7 +144,73 @@ async def fetch_plex_sessions(client: httpx.AsyncClient) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Background poll loop
+# System stats helper (synchronous psutil — run in executor)
+# ---------------------------------------------------------------------------
+
+def _get_system_stats() -> dict:
+    global _prev_net
+
+    cpu_pct = psutil.cpu_percent(interval=None)
+    mem     = psutil.virtual_memory()
+    ram_pct = mem.percent
+
+    # Disk usage with fallbacks
+    disk_pct = 0.0
+    for path in [DISK_PATH, "/data", "/"]:
+        try:
+            du = psutil.disk_usage(path)
+            disk_pct = du.percent
+            break
+        except Exception:
+            continue
+
+    # Network rate (Mbps)
+    net_rx_mbps = 0.0
+    net_tx_mbps = 0.0
+    try:
+        counters = psutil.net_io_counters()
+        now_ts   = datetime.utcnow().timestamp()
+        if _prev_net:
+            elapsed      = max(now_ts - _prev_net["ts"], 0.001)
+            rx_diff      = max(counters.bytes_recv - _prev_net["rx"], 0)
+            tx_diff      = max(counters.bytes_sent - _prev_net["tx"], 0)
+            net_rx_mbps  = round(rx_diff * 8 / elapsed / 1_000_000, 3)
+            net_tx_mbps  = round(tx_diff * 8 / elapsed / 1_000_000, 3)
+        _prev_net = {"ts": now_ts, "rx": counters.bytes_recv, "tx": counters.bytes_sent}
+    except Exception:
+        pass
+
+    # CPU temperature (optional)
+    temp_c = None
+    try:
+        temps = psutil.sensors_temperatures()
+        if temps:
+            for key in ("coretemp", "k10temp", "cpu_thermal", "cpu-thermal"):
+                if key in temps and temps[key]:
+                    temp_c = round(temps[key][0].current, 1)
+                    break
+            if temp_c is None:
+                for entries in temps.values():
+                    if entries:
+                        temp_c = round(entries[0].current, 1)
+                        break
+    except Exception:
+        pass
+
+    return {
+        "cpu_pct":     round(cpu_pct, 1),
+        "ram_pct":     round(ram_pct, 1),
+        "ram_used_gb": round(mem.used / 1024**3, 2),
+        "ram_total_gb": round(mem.total / 1024**3, 2),
+        "disk_pct":    round(disk_pct, 1),
+        "net_rx_mbps": net_rx_mbps,
+        "net_tx_mbps": net_tx_mbps,
+        "temp_c":      temp_c,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Background poll loops
 # ---------------------------------------------------------------------------
 
 async def _poll_once() -> None:
@@ -157,13 +250,76 @@ async def _poll_once() -> None:
     logger.info("Polled Plex: %d active session(s)", len(sessions))
 
 
+async def _poll_system_once() -> None:
+    loop  = asyncio.get_running_loop()
+    stats = await loop.run_in_executor(None, _get_system_stats)
+    now   = datetime.utcnow().isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO system_snapshots
+                (timestamp, cpu_pct, ram_pct, disk_pct, net_rx_mbps, net_tx_mbps, temp_c)
+            VALUES (?,?,?,?,?,?,?)
+            """,
+            (now, stats["cpu_pct"], stats["ram_pct"], stats["disk_pct"],
+             stats["net_rx_mbps"], stats["net_tx_mbps"], stats["temp_c"]),
+        )
+        await db.commit()
+
+
+async def _poll_rd_once() -> None:
+    if not RD_TOKEN:
+        return
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://api.real-debrid.com/rest/1.0/traffic",
+                headers={"Authorization": f"Bearer {RD_TOKEN}"},
+            )
+            resp.raise_for_status()
+            traffic = resp.json()
+        # traffic is a dict keyed by date: {"2024-01-01": {"downloaded": bytes, "streams": n}}
+        for date_str, info in traffic.items():
+            dl_bytes = info.get("downloaded", 0) or 0
+            streams  = info.get("streams", 0) or 0
+            dl_gb    = round(dl_bytes / 1024**3, 3)
+            async with aiosqlite.connect(DB_PATH) as db:
+                await db.execute(
+                    """
+                    INSERT INTO rd_daily_usage (date, downloaded_gb, streams)
+                    VALUES (?,?,?)
+                    ON CONFLICT(date) DO UPDATE SET
+                        downloaded_gb = excluded.downloaded_gb,
+                        streams       = excluded.streams
+                    """,
+                    (date_str, dl_gb, streams),
+                )
+                await db.commit()
+        logger.info("RD traffic updated, %d day(s)", len(traffic))
+    except Exception as exc:
+        logger.warning("RD poll error: %s", exc)
+
+
 async def poll_loop() -> None:
     while True:
         try:
-            await _poll_once()
+            await asyncio.gather(
+                _poll_once(),
+                _poll_system_once(),
+            )
         except Exception as exc:
             logger.warning("Poll error: %s", exc)
         await asyncio.sleep(POLL_INTERVAL)
+
+
+async def rd_poll_loop() -> None:
+    while True:
+        try:
+            await _poll_rd_once()
+        except Exception as exc:
+            logger.warning("RD loop error: %s", exc)
+        await asyncio.sleep(3600)
 
 
 # ---------------------------------------------------------------------------
@@ -172,18 +328,28 @@ async def poll_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Warm up psutil CPU counter (first call always returns 0)
+    psutil.cpu_percent(interval=None)
+
     await init_db()
-    task = asyncio.create_task(poll_loop())
+    task_poll = asyncio.create_task(poll_loop())
+    task_rd   = asyncio.create_task(rd_poll_loop())
     yield
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
+    task_poll.cancel()
+    task_rd.cancel()
+    for t in (task_poll, task_rd):
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(title="Plex Dashboard", lifespan=lifespan)
 
+
+# ---------------------------------------------------------------------------
+# Existing endpoints
+# ---------------------------------------------------------------------------
 
 @app.get("/api/sessions")
 async def api_sessions():
@@ -262,10 +428,6 @@ async def api_stats():
 
 @app.get("/api/debrid")
 async def api_debrid():
-    """
-    Probe common cli_debrid API endpoints and return whatever responds 200.
-    The actual endpoint paths depend on your cli_debrid version/config.
-    """
     results: dict = {}
     first_error: str | None = None
 
@@ -294,11 +456,306 @@ async def api_debrid():
                 if first_error is None:
                     first_error = str(exc)
 
+    # Extract items array from whichever endpoint responded
+    items = None
+    for payload in results.values():
+        if isinstance(payload, list):
+            items = payload
+            break
+        if isinstance(payload, dict):
+            for key in ("queue", "downloads", "items", "data", "torrents", "results"):
+                if isinstance(payload.get(key), list):
+                    items = payload[key]
+                    break
+            if items is not None:
+                break
+
+    categories = {
+        "Wanted": [], "Upgrading": [], "Checking": [],
+        "Downloading": [], "Completed": [], "Failed": [], "Other": [],
+    }
+    if items:
+        for item in items:
+            status = (item.get("state") or item.get("status") or "").lower()
+            if "want" in status:
+                categories["Wanted"].append(item)
+            elif "upgrad" in status:
+                categories["Upgrading"].append(item)
+            elif "check" in status or "scraping" in status:
+                categories["Checking"].append(item)
+            elif "download" in status:
+                categories["Downloading"].append(item)
+            elif "complet" in status or "symlink" in status:
+                categories["Completed"].append(item)
+            elif "fail" in status or "error" in status:
+                categories["Failed"].append(item)
+            else:
+                categories["Other"].append(item)
+
+    counts = {k: len(v) for k, v in categories.items()}
+
     return {
         "endpoints": results,
         "url": DEBRID_URL,
         "error": first_error if not results else None,
+        "items": items or [],
+        "categories": categories,
+        "counts": counts,
+        "total": len(items) if items else 0,
     }
+
+
+# ---------------------------------------------------------------------------
+# New endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/plex/libraries")
+async def api_plex_libraries():
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Get library sections
+            r = await client.get(f"{PLEX_URL}/library/sections", headers=PLEX_HEADERS)
+            r.raise_for_status()
+            sections_data = r.json().get("MediaContainer", {}).get("Directory", [])
+
+            libraries = []
+            for sec in sections_data:
+                sec_key = sec.get("key")
+                sec_type = sec.get("type", "")
+                sec_title = sec.get("title", "")
+                # Get count for this section
+                count = 0
+                try:
+                    cr = await client.get(
+                        f"{PLEX_URL}/library/sections/{sec_key}/all",
+                        headers=PLEX_HEADERS,
+                        params={"X-Plex-Container-Start": 0, "X-Plex-Container-Size": 0},
+                    )
+                    count = cr.json().get("MediaContainer", {}).get("totalSize", 0)
+                except Exception:
+                    pass
+                libraries.append({"key": sec_key, "title": sec_title, "type": sec_type, "count": count})
+
+            # Recent additions (last 15)
+            recent = []
+            try:
+                rr = await client.get(
+                    f"{PLEX_URL}/library/recentlyAdded",
+                    headers=PLEX_HEADERS,
+                    params={"X-Plex-Container-Size": 15},
+                )
+                items = rr.json().get("MediaContainer", {}).get("Metadata", [])
+                for item in items[:15]:
+                    recent.append({
+                        "title":      item.get("title", ""),
+                        "type":       item.get("type", ""),
+                        "year":       item.get("year"),
+                        "addedAt":    item.get("addedAt"),
+                        "show_title": item.get("grandparentTitle") or item.get("parentTitle") or "",
+                        "library":    item.get("librarySectionTitle", ""),
+                    })
+            except Exception:
+                pass
+
+        return {"libraries": libraries, "recent": recent, "error": None}
+    except Exception as exc:
+        logger.error("Libraries fetch failed: %s", exc)
+        return {"libraries": [], "recent": [], "error": str(exc)}
+
+
+@app.get("/api/transcode/stats")
+async def api_transcode_stats():
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        since_7d = (datetime.utcnow() - timedelta(days=7)).isoformat()
+        async with db.execute(
+            """
+            SELECT transcode_decision, COUNT(*) AS count
+            FROM viewing_sessions
+            GROUP BY transcode_decision
+            """
+        ) as cur:
+            all_time = [dict(r) for r in await cur.fetchall()]
+        async with db.execute(
+            """
+            SELECT transcode_decision, COUNT(*) AS count
+            FROM viewing_sessions
+            WHERE last_seen > ?
+            GROUP BY transcode_decision
+            """,
+            (since_7d,),
+        ) as cur:
+            last_7d = [dict(r) for r in await cur.fetchall()]
+    return {"all_time": all_time, "last_7d": last_7d}
+
+
+@app.get("/api/peaks")
+async def api_peaks():
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT
+                CAST(strftime('%H', timestamp) AS INTEGER) AS hour,
+                COUNT(*)                                   AS stream_count,
+                CAST(AVG(bandwidth_kbps) AS INTEGER)       AS avg_bw_kbps
+            FROM bandwidth_history
+            GROUP BY hour
+            ORDER BY hour
+            """
+        ) as cur:
+            rows = [dict(r) for r in await cur.fetchall()]
+    # Fill all 24 hours
+    by_hour = {r["hour"]: r for r in rows}
+    result = [
+        {
+            "hour":         h,
+            "stream_count": by_hour.get(h, {}).get("stream_count", 0),
+            "avg_bw_kbps":  by_hour.get(h, {}).get("avg_bw_kbps", 0),
+        }
+        for h in range(24)
+    ]
+    return {"data": result}
+
+
+@app.get("/api/content/top")
+async def api_content_top(days: int = 30):
+    since = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT
+                title,
+                show_title,
+                media_type,
+                COUNT(*) AS play_count,
+                COUNT(DISTINCT user) AS unique_users
+            FROM viewing_sessions
+            WHERE last_seen > ?
+            GROUP BY title, show_title
+            ORDER BY play_count DESC
+            LIMIT 10
+            """,
+            (since,),
+        ) as cur:
+            rows = [dict(r) for r in await cur.fetchall()]
+    return {"data": rows, "days": days}
+
+
+@app.get("/api/users/month")
+async def api_users_month():
+    now = datetime.utcnow()
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT
+                user,
+                COUNT(*) AS sessions,
+                ROUND(SUM(bandwidth_kbps) * 30.0 / 8 / 1024, 1) AS approx_mb
+            FROM bandwidth_history
+            WHERE timestamp > ?
+            GROUP BY user
+            ORDER BY approx_mb DESC
+            """,
+            (month_start,),
+        ) as cur:
+            rows = [dict(r) for r in await cur.fetchall()]
+    return {"data": rows, "month": now.strftime("%Y-%m")}
+
+
+@app.get("/api/rd/usage")
+async def api_rd_usage(days: int = 30):
+    since = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT date, downloaded_gb, streams
+            FROM rd_daily_usage
+            WHERE date >= ?
+            ORDER BY date
+            """,
+            (since,),
+        ) as cur:
+            rows = [dict(r) for r in await cur.fetchall()]
+    return {"data": rows, "days": days, "has_token": bool(RD_TOKEN)}
+
+
+@app.get("/api/system/current")
+async def api_system_current():
+    loop  = asyncio.get_running_loop()
+    stats = await loop.run_in_executor(None, _get_system_stats)
+    return stats
+
+
+@app.get("/api/system/history")
+async def api_system_history(hours: int = 3):
+    since = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT timestamp, cpu_pct, ram_pct, disk_pct,
+                   net_rx_mbps, net_tx_mbps, temp_c
+            FROM system_snapshots
+            WHERE timestamp > ?
+            ORDER BY timestamp
+            """,
+            (since,),
+        ) as cur:
+            rows = [dict(r) for r in await cur.fetchall()]
+    return {"data": rows, "hours": hours}
+
+
+@app.get("/api/docker/containers")
+async def api_docker_containers():
+    sock_path = "/var/run/docker.sock"
+    if not os.path.exists(sock_path):
+        return {"containers": [], "error": "Docker socket not mounted"}
+    try:
+        transport = httpx.AsyncHTTPTransport(uds=sock_path)
+        async with httpx.AsyncClient(transport=transport, timeout=5.0) as client:
+            resp = await client.get("http://docker/containers/json?all=1")
+            resp.raise_for_status()
+            raw = resp.json()
+        containers = [
+            {
+                "id":     c.get("Id", "")[:12],
+                "name":   (c.get("Names") or [""])[0].lstrip("/"),
+                "image":  c.get("Image", ""),
+                "state":  c.get("State", ""),
+                "status": c.get("Status", ""),
+            }
+            for c in raw
+        ]
+        return {"containers": containers, "error": None}
+    except Exception as exc:
+        logger.warning("Docker socket error: %s", exc)
+        return {"containers": [], "error": str(exc)}
+
+
+@app.get("/api/zilean")
+async def api_zilean():
+    result = {"healthy": False, "torrent_count": None, "error": None}
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            h = await client.get(f"{ZILEAN_URL}/healthcheck")
+            result["healthy"] = h.status_code == 200
+            try:
+                t = await client.get(f"{ZILEAN_URL}/v1/api/torrents/count")
+                if t.status_code == 200:
+                    data = t.json()
+                    result["torrent_count"] = (
+                        data.get("count") or data.get("torrents") or data
+                    )
+            except Exception:
+                pass
+    except Exception as exc:
+        result["error"] = str(exc)
+    return result
 
 
 # Static files must be mounted last so API routes take priority.

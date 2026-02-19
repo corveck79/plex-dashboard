@@ -7,16 +7,27 @@ services:
     # Host networking lets the container reach:
     #   - Plex at 192.168.1.101:32400
     #   - cli_debrid at 192.168.1.101:5500
+    #   - Zilean at 192.168.1.101:8181
     # The app will bind directly to host port 8080.
     network_mode: host
 
     volumes:
       # SQLite database persists across container rebuilds
       - ./data:/data
+      # NAS storage for disk usage monitoring (read-only)
+      - /volume1:/nas:ro
+      # Docker socket for container monitoring (read-only)
+      # Note: container must run with same GID as docker group on host.
+      # On Synology: check `stat /var/run/docker.sock` and set group accordingly.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
 
     environment:
       DB_PATH: /data/plex_dashboard.db
+      DISK_PATH: /nas
+      ZILEAN_URL: http://192.168.1.101:8181
       # Override Plex / debrid endpoints here if they ever change:
       # PLEX_URL: http://192.168.1.101:32400
       # PLEX_TOKEN: 6eMBEX1VddA6wh5LZwFj
       # DEBRID_URL: http://192.168.1.101:5500
+      # Real-Debrid token for usage tracking:
+      # RD_TOKEN: <paste your token here>
