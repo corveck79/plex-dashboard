@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Plex Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { colors: { plex: '#E5A00D', 'plex-dk': '#B8800A' } } }
+    }
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/moment@2.29.4/moment.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-moment@1.0.1/dist/chartjs-adapter-moment.min.js"></script>
+  <style>
+    body { background: #0d0f14; }
+    .card  { background: #161b26; border: 1px solid #232a3a; }
+    .table-row:hover { background: rgba(35,42,58,0.6); }
+    .progress-fill { transition: width 0.6s ease; }
+    .pulse { animation: pulse 2s cubic-bezier(.4,0,.6,1) infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+    ::-webkit-scrollbar { width:5px; height:5px; }
+    ::-webkit-scrollbar-track { background:#161b26; }
+    ::-webkit-scrollbar-thumb { background:#E5A00D; border-radius:3px; }
+    .btn-active { background:#E5A00D !important; color:#000 !important; }
+  </style>
+</head>
+<body class="text-gray-200 min-h-screen">
+
+<!-- ─── Header ─────────────────────────────────────────────────────────── -->
+<header class="sticky top-0 z-10 border-b border-gray-800" style="background:#0d0f14cc;backdrop-filter:blur(8px)">
+  <div class="max-w-7xl mx-auto px-5 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <!-- Plex-style play button logo -->
+      <svg class="w-7 h-7 text-plex" viewBox="0 0 24 24" fill="currentColor">
+        <circle cx="12" cy="12" r="10" fill="#E5A00D" opacity=".15"/>
+        <path d="M10 8.5l6 3.5-6 3.5V8.5z" fill="#E5A00D"/>
+      </svg>
+      <div>
+        <h1 class="font-bold text-white text-lg leading-none">Plex Dashboard</h1>
+        <p class="text-xs text-gray-500 mt-0.5" id="last-updated">Starting…</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-4">
+      <div class="flex items-center gap-1.5 text-xs">
+        <span class="w-2 h-2 rounded-full pulse" id="dot" style="background:#22c55e"></span>
+        <span id="conn-status" class="text-gray-400">Connecting…</span>
+      </div>
+      <button onclick="refreshAll()"
+        class="px-3 py-1.5 rounded text-xs text-gray-300 transition-colors hover:text-white"
+        style="background:#1e2535">
+        ↻ Refresh
+      </button>
+    </div>
+  </div>
+</header>
+
+<main class="max-w-7xl mx-auto px-5 py-5 space-y-6">
+
+  <!-- ─── Stat chips ──────────────────────────────────────────────────── -->
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+    <div class="card rounded-xl p-4">
+      <p class="text-xs text-gray-500 uppercase tracking-widest">Active Streams</p>
+      <p class="text-3xl font-bold text-plex mt-1" id="chip-streams">—</p>
+    </div>
+    <div class="card rounded-xl p-4">
+      <p class="text-xs text-gray-500 uppercase tracking-widest">Total Bandwidth</p>
+      <p class="text-3xl font-bold text-blue-400 mt-1" id="chip-bw">—</p>
+    </div>
+    <div class="card rounded-xl p-4">
+      <p class="text-xs text-gray-500 uppercase tracking-widest">Debrid Queue</p>
+      <p class="text-3xl font-bold text-purple-400 mt-1" id="chip-queue">—</p>
+    </div>
+    <div class="card rounded-xl p-4">
+      <p class="text-xs text-gray-500 uppercase tracking-widest">Total Recorded</p>
+      <p class="text-3xl font-bold text-green-400 mt-1" id="chip-total">—</p>
+    </div>
+  </div>
+
+  <!-- ─── Current Viewers ─────────────────────────────────────────────── -->
+  <section>
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="font-semibold flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-red-500 pulse"></span>
+        Currently Watching
+      </h2>
+      <span class="text-xs text-gray-500" id="session-count">0 streams</span>
+    </div>
+    <div id="sessions-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+      <div class="col-span-full text-center py-10 text-gray-600 text-sm" id="sessions-empty">
+        No active streams
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── Bandwidth chart + Debrid queue ──────────────────────────────── -->
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+
+    <!-- Bandwidth chart (2/3) -->
+    <div class="lg:col-span-2 card rounded-xl p-5">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="font-semibold">Bandwidth History</h2>
+        <div class="flex gap-1">
+          <button class="bw-btn px-2 py-1 text-xs rounded" data-h="1"  onclick="loadBandwidth(1)">1h</button>
+          <button class="bw-btn px-2 py-1 text-xs rounded" data-h="3"  onclick="loadBandwidth(3)">3h</button>
+          <button class="bw-btn px-2 py-1 text-xs rounded btn-active" data-h="6"  onclick="loadBandwidth(6)">6h</button>
+          <button class="bw-btn px-2 py-1 text-xs rounded" data-h="24" onclick="loadBandwidth(24)">24h</button>
+        </div>
+      </div>
+      <div class="relative" style="height:260px">
+        <canvas id="bw-chart"></canvas>
+        <div id="bw-empty" class="absolute inset-0 hidden items-center justify-center text-gray-600 text-sm flex">
+          No bandwidth data yet — data accumulates as streams play
+        </div>
+      </div>
+    </div>
+
+    <!-- cli_debrid queue (1/3) -->
+    <div class="card rounded-xl p-5">
+      <h2 class="font-semibold mb-3 flex items-center gap-2">
+        <span class="text-purple-400 text-base">⚡</span> cli_debrid Queue
+      </h2>
+      <div id="debrid-list" class="space-y-2 overflow-y-auto" style="max-height:260px">
+        <p class="text-gray-600 text-sm text-center py-6">Loading…</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Per-user stats ───────────────────────────────────────────────── -->
+  <section class="card rounded-xl overflow-hidden">
+    <div class="px-5 py-3 border-b border-gray-800">
+      <h2 class="font-semibold">User Stats</h2>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="text-xs uppercase text-gray-500" style="background:#1a2030">
+          <tr>
+            <th class="px-4 py-3 text-left">User</th>
+            <th class="px-4 py-3 text-right">Sessions</th>
+            <th class="px-4 py-3 text-right">Avg Bandwidth</th>
+            <th class="px-4 py-3 text-right">Peak Bandwidth</th>
+            <th class="px-4 py-3 text-right">Last Seen</th>
+          </tr>
+        </thead>
+        <tbody id="stats-table" class="divide-y divide-gray-800">
+          <tr><td colspan="5" class="px-4 py-6 text-center text-gray-600">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ─── Watch History ────────────────────────────────────────────────── -->
+  <section class="card rounded-xl overflow-hidden">
+    <div class="px-5 py-3 border-b border-gray-800 flex items-center justify-between">
+      <h2 class="font-semibold">Watch History</h2>
+      <span class="text-xs text-gray-500">Last 100 sessions</span>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="text-xs uppercase text-gray-500" style="background:#1a2030">
+          <tr>
+            <th class="px-4 py-3 text-left">User</th>
+            <th class="px-4 py-3 text-left">Title</th>
+            <th class="px-4 py-3 text-left">Platform</th>
+            <th class="px-4 py-3 text-left">Progress</th>
+            <th class="px-4 py-3 text-right">Bandwidth</th>
+            <th class="px-4 py-3 text-left">Stream</th>
+            <th class="px-4 py-3 text-right">Last Seen</th>
+          </tr>
+        </thead>
+        <tbody id="history-table" class="divide-y divide-gray-800">
+          <tr><td colspan="7" class="px-4 py-6 text-center text-gray-600">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<script>
+// ─── Colour pool ────────────────────────────────────────────────────────────
+const PALETTE = ['#E5A00D','#3B82F6','#10B981','#EF4444','#8B5CF6',
+                 '#F59E0B','#06B6D4','#EC4899','#84CC16','#F97316'];
+const colourOf = (() => {
+  const map = {}; let i = 0;
+  return u => (map[u] = map[u] ?? PALETTE[i++ % PALETTE.length]);
+})();
+
+// ─── Formatters ─────────────────────────────────────────────────────────────
+const esc = s => String(s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+function fmtBw(kbps) {
+  if (!kbps) return '0 kbps';
+  return kbps >= 1000 ? (kbps/1000).toFixed(1)+' Mbps' : kbps+' kbps';
+}
+
+function fmtMs(ms) {
+  const s=Math.floor(ms/1000), h=Math.floor(s/3600),
+        m=Math.floor((s%3600)/60), sec=s%60;
+  return h ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
+}
+const pad = n => String(n).padStart(2,'0');
+
+function timeAgo(iso) {
+  if (!iso) return '—';
+  const d = (Date.now() - new Date(iso.endsWith('Z')?iso:iso+'Z')) / 1000;
+  if (d < 5)     return 'just now';
+  if (d < 60)    return Math.floor(d)+'s ago';
+  if (d < 3600)  return Math.floor(d/60)+'m ago';
+  if (d < 86400) return Math.floor(d/3600)+'h ago';
+  return Math.floor(d/86400)+'d ago';
+}
+
+const STATE_ICON  = {playing:'▶',paused:'⏸',buffering:'⏳'};
+const STATE_COLOR = {playing:'text-green-400',paused:'text-yellow-400',buffering:'text-blue-400'};
+const MEDIA_ICON  = {episode:'📺',movie:'🎬',track:'🎵',clip:'🎞️'};
+const TC_CLASS    = {
+  direct:    'bg-green-900/50 text-green-300',
+  copy:      'bg-blue-900/50 text-blue-300',
+  transcode: 'bg-red-900/50 text-red-300',
+};
+
+// ─── Status dot ─────────────────────────────────────────────────────────────
+function setStatus(ok, msg) {
+  document.getElementById('dot').style.background = ok ? '#22c55e' : '#ef4444';
+  document.getElementById('conn-status').textContent = msg;
+}
+
+// ─── Sessions ────────────────────────────────────────────────────────────────
+async function loadSessions() {
+  const res  = await fetch('/api/sessions');
+  const data = await res.json();
+
+  const grid = document.getElementById('sessions-grid');
+  const sessions = data.sessions || [];
+
+  document.getElementById('chip-streams').textContent = sessions.length;
+  document.getElementById('session-count').textContent =
+    sessions.length + ' stream' + (sessions.length !== 1 ? 's' : '');
+  const totalBw = sessions.reduce((s,x)=>s+(x.bandwidth_kbps||0),0);
+  document.getElementById('chip-bw').textContent = fmtBw(totalBw);
+
+  if (data.error) {
+    setStatus(false, 'Plex error');
+    grid.innerHTML = `<div class="col-span-full rounded-lg p-4 text-red-400 text-sm"
+      style="background:#2a1010;border:1px solid #7f1d1d">
+      <b>Plex error:</b> ${esc(data.error)}</div>`;
+    return;
+  }
+  setStatus(true, 'Connected');
+
+  if (!sessions.length) {
+    grid.innerHTML = `<div class="col-span-full text-center py-12 text-gray-600 text-sm">
+      No active streams</div>`;
+    return;
+  }
+
+  grid.innerHTML = sessions.map(s => {
+    const c    = colourOf(s.user);
+    const disp = s.show_title ? `${s.show_title}: ${s.title}` : s.title;
+    return `
+    <div class="card rounded-xl p-4" style="transition:box-shadow .2s"
+         onmouseenter="this.style.boxShadow='0 4px 24px ${c}30'"
+         onmouseleave="this.style.boxShadow=''">
+      <!-- user row -->
+      <div class="flex items-start justify-between mb-3">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-black flex-shrink-0"
+               style="background:${c}">${esc(s.user[0].toUpperCase())}</div>
+          <div>
+            <p class="text-sm font-medium text-white leading-tight">${esc(s.user)}</p>
+            <p class="text-xs text-gray-500">${esc(s.platform||'—')} · ${esc(s.player||'—')}</p>
+          </div>
+        </div>
+        <span class="text-lg ${STATE_COLOR[s.state]||'text-gray-400'}">
+          ${STATE_ICON[s.state]||'⏹'}
+        </span>
+      </div>
+
+      <!-- title -->
+      <p class="text-sm font-medium text-white mb-0.5 leading-snug">
+        ${MEDIA_ICON[s.media_type]||'▶'} ${esc(disp)}</p>
+      ${s.year ? `<p class="text-xs text-gray-500 mb-3">${s.year}</p>` : '<div class="mb-3"></div>'}
+
+      <!-- progress -->
+      <div class="mb-3">
+        <div class="flex justify-between text-xs text-gray-500 mb-1">
+          <span>${fmtMs(s.view_offset_ms)}</span>
+          <span>${s.progress}%</span>
+          <span>${fmtMs(s.duration_ms)}</span>
+        </div>
+        <div class="h-1.5 rounded-full overflow-hidden" style="background:#2a3040">
+          <div class="h-full rounded-full progress-fill" style="width:${s.progress}%;background:${c}"></div>
+        </div>
+      </div>
+
+      <!-- footer -->
+      <div class="flex items-center justify-between text-xs">
+        <span class="px-1.5 py-0.5 rounded ${TC_CLASS[s.transcode_decision]||'bg-gray-800 text-gray-400'}">
+          ${esc(s.transcode_decision||'direct')}</span>
+        <span class="text-gray-400">
+          ${fmtBw(s.bandwidth_kbps)}
+          ${s.location ? `<span class="text-gray-600"> · ${esc(s.location)}</span>` : ''}
+        </span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ─── Bandwidth chart ──────────────────────────────────────────────────────────
+let bwChart = null, currentHours = 6;
+
+async function loadBandwidth(h = 6) {
+  currentHours = h;
+  document.querySelectorAll('.bw-btn').forEach(b => {
+    const active = parseInt(b.dataset.h) === h;
+    b.classList.toggle('btn-active', active);
+    b.style.background = active ? '' : '#1e2535';
+    b.style.color = active ? '' : '#9ca3af';
+  });
+  try {
+    const res = await fetch(`/api/bandwidth/history?hours=${h}`);
+    renderBwChart((await res.json()).data || []);
+  } catch(e) { console.error(e); }
+}
+
+function renderBwChart(rows) {
+  const empty = document.getElementById('bw-empty');
+  if (!rows.length) {
+    empty.classList.replace('hidden','flex');
+    if (bwChart) { bwChart.data.datasets=[]; bwChart.update(); }
+    return;
+  }
+  empty.classList.replace('flex','hidden');
+
+  // group by user
+  const byUser = {};
+  rows.forEach(r => {
+    (byUser[r.user] = byUser[r.user]||[]).push({
+      x: r.bucket,
+      y: Math.round(r.avg_bw_kbps / 100) / 10   // kbps → Mbps, 1dp
+    });
+  });
+
+  const datasets = Object.entries(byUser).map(([u, pts]) => ({
+    label: u, data: pts,
+    borderColor: colourOf(u),
+    backgroundColor: colourOf(u)+'25',
+    fill: true, tension: 0.4, pointRadius: 2, borderWidth: 2,
+  }));
+
+  if (bwChart) { bwChart.data.datasets = datasets; bwChart.update('none'); return; }
+
+  bwChart = new Chart(document.getElementById('bw-chart'), {
+    type: 'line',
+    data: { datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { intersect: false, mode: 'index' },
+      plugins: {
+        legend: { labels: { color:'#9ca3af', font:{ size:12 } } },
+        tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y} Mbps` } },
+      },
+      scales: {
+        x: {
+          type: 'time',
+          time: { tooltipFormat:'HH:mm', displayFormats:{ minute:'HH:mm', hour:'HH:mm' } },
+          grid: { color:'#232a3a' }, ticks: { color:'#4b5563', maxTicksLimit:8 },
+        },
+        y: {
+          beginAtZero: true,
+          grid: { color:'#232a3a' },
+          ticks: { color:'#4b5563', callback: v => v+' Mbps' },
+        },
+      },
+    },
+  });
+}
+
+// ─── Debrid ───────────────────────────────────────────────────────────────────
+async function loadDebrid() {
+  const box = document.getElementById('debrid-list');
+  try {
+    const res  = await fetch('/api/debrid');
+    const data = await res.json();
+    renderDebrid(data, box);
+  } catch(e) {
+    box.innerHTML = `<p class="text-red-400 text-sm text-center">Request failed</p>`;
+    document.getElementById('chip-queue').textContent = '—';
+  }
+}
+
+function renderDebrid(data, box) {
+  if (data.error) {
+    box.innerHTML = `
+      <div class="text-center py-4">
+        <p class="text-yellow-400 text-sm">cli_debrid unreachable</p>
+        <p class="text-gray-600 text-xs mt-1">${esc(data.url)}</p>
+        <p class="text-gray-600 text-xs mt-1">${esc(data.error)}</p>
+      </div>`;
+    document.getElementById('chip-queue').textContent = '—';
+    return;
+  }
+
+  // Hunt for an array of queue/download items in any endpoint response
+  let items = null;
+  for (const payload of Object.values(data.endpoints||{})) {
+    if (Array.isArray(payload)) { items = payload; break; }
+    if (payload && typeof payload === 'object') {
+      for (const key of ['queue','downloads','items','data','torrents','results']) {
+        if (Array.isArray(payload[key])) { items = payload[key]; break; }
+      }
+      if (items) break;
+    }
+  }
+
+  if (!items) {
+    // Show raw so the user can see what the API returns
+    const raw = JSON.stringify(data.endpoints, null, 2).slice(0, 800);
+    document.getElementById('chip-queue').textContent = '?';
+    box.innerHTML = `
+      <p class="text-xs text-gray-500 mb-1">Raw API response (adapt endpoint handling as needed):</p>
+      <pre class="text-xs text-gray-500 overflow-auto whitespace-pre-wrap">${esc(raw)}</pre>`;
+    return;
+  }
+
+  document.getElementById('chip-queue').textContent = items.length;
+  if (!items.length) {
+    box.innerHTML = '<p class="text-gray-600 text-sm text-center py-6">Queue is empty</p>';
+    return;
+  }
+
+  box.innerHTML = items.slice(0, 30).map(item => {
+    const name   = item.name || item.filename || item.title || item.id || 'Unknown';
+    const status = item.status || item.state || '';
+    const pct    = item.progress ?? item.percent ?? item.percentage ?? null;
+    return `
+    <div class="rounded-lg p-2.5 text-xs" style="background:#1e2535">
+      <p class="text-gray-200 font-medium truncate" title="${esc(name)}">${esc(name)}</p>
+      ${status ? `<p class="text-gray-500 mt-0.5">${esc(status)}</p>` : ''}
+      ${pct !== null ? `
+        <div class="mt-1.5 h-1 rounded-full overflow-hidden" style="background:#2a3040">
+          <div class="h-full bg-purple-500 rounded-full" style="width:${Math.min(100,+pct)}%"></div>
+        </div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+// ─── Stats table ──────────────────────────────────────────────────────────────
+async function loadStats() {
+  try {
+    const res = await fetch('/api/stats');
+    const d   = await res.json();
+    document.getElementById('chip-total').textContent = d.total_sessions;
+    const tb = document.getElementById('stats-table');
+    if (!d.user_stats.length) {
+      tb.innerHTML = '<tr><td colspan="5" class="px-4 py-6 text-center text-gray-600">No data yet</td></tr>';
+      return;
+    }
+    tb.innerHTML = d.user_stats.map(u => {
+      const c = colourOf(u.user);
+      return `
+      <tr class="table-row transition-colors">
+        <td class="px-4 py-3">
+          <div class="flex items-center gap-2">
+            <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-black flex-shrink-0"
+                 style="background:${c}">${esc(u.user[0].toUpperCase())}</div>
+            <span>${esc(u.user)}</span>
+          </div>
+        </td>
+        <td class="px-4 py-3 text-right">${u.total_sessions}</td>
+        <td class="px-4 py-3 text-right text-blue-300">${fmtBw(u.avg_bw_kbps)}</td>
+        <td class="px-4 py-3 text-right text-orange-300">${fmtBw(u.peak_bw_kbps)}</td>
+        <td class="px-4 py-3 text-right text-gray-500">${timeAgo(u.last_seen)}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) { console.error(e); }
+}
+
+// ─── History table ────────────────────────────────────────────────────────────
+async function loadHistory() {
+  try {
+    const res = await fetch('/api/history');
+    const d   = await res.json();
+    const tb  = document.getElementById('history-table');
+    if (!d.history.length) {
+      tb.innerHTML = '<tr><td colspan="7" class="px-4 py-6 text-center text-gray-600">No history yet</td></tr>';
+      return;
+    }
+    tb.innerHTML = d.history.map(h => {
+      const c    = colourOf(h.user);
+      const disp = h.show_title ? `${h.show_title}: ${h.title}` : h.title;
+      return `
+      <tr class="table-row transition-colors">
+        <td class="px-4 py-3">
+          <div class="flex items-center gap-1.5">
+            <div class="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold text-black flex-shrink-0"
+                 style="background:${c}">${esc(h.user[0].toUpperCase())}</div>
+            <span class="text-sm">${esc(h.user)}</span>
+          </div>
+        </td>
+        <td class="px-4 py-3 max-w-xs">
+          <p class="text-sm text-white truncate">
+            ${MEDIA_ICON[h.media_type]||'▶'} ${esc(disp)}</p>
+        </td>
+        <td class="px-4 py-3 text-sm text-gray-400">${esc(h.platform||'—')}</td>
+        <td class="px-4 py-3">
+          <div class="flex items-center gap-2">
+            <div class="w-14 h-1.5 rounded-full overflow-hidden" style="background:#2a3040">
+              <div class="h-full rounded-full" style="width:${Math.min(100,h.progress_percent||0)}%;background:${c}"></div>
+            </div>
+            <span class="text-xs text-gray-500">${(h.progress_percent||0).toFixed(0)}%</span>
+          </div>
+        </td>
+        <td class="px-4 py-3 text-right text-sm text-gray-400">${fmtBw(h.bandwidth_kbps)}</td>
+        <td class="px-4 py-3">
+          <span class="px-1.5 py-0.5 rounded text-xs ${TC_CLASS[h.transcode_decision]||'bg-gray-800 text-gray-400'}">
+            ${esc(h.transcode_decision||'direct')}</span>
+        </td>
+        <td class="px-4 py-3 text-right text-sm text-gray-500">${timeAgo(h.last_seen)}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) { console.error(e); }
+}
+
+// ─── Orchestration ────────────────────────────────────────────────────────────
+async function refreshAll() {
+  document.getElementById('last-updated').textContent = 'Refreshing…';
+  await Promise.allSettled([
+    loadSessions(),
+    loadBandwidth(currentHours),
+    loadDebrid(),
+    loadStats(),
+    loadHistory(),
+  ]);
+  document.getElementById('last-updated').textContent =
+    'Updated ' + new Date().toLocaleTimeString();
+}
+
+// Init button styles
+document.querySelectorAll('.bw-btn').forEach(b => {
+  if (!b.classList.contains('btn-active')) {
+    b.style.background = '#1e2535';
+    b.style.color = '#9ca3af';
+  }
+});
+
+refreshAll();
+setInterval(refreshAll, 30_000);
+</script>
+</body>
+</html>
