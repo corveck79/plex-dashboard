@@ -1,0 +1,24 @@
+# Git
+.git/
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Data (never bake the database into the image)
+data/
+*.db
+*.sqlite
+
+# Secrets / env
+.env
+.env.*
+
+# Docker files themselves (not needed in build context)
+Dockerfile
+docker-compose.yml
+.dockerignore

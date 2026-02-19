@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 PLEX_URL = "http://192.168.1.101:32400"
 PLEX_TOKEN = "6eMBEX1VddA6wh5LZwFj"
 DEBRID_URL = "http://192.168.1.101:5500"
-DB_PATH = "plex_dashboard.db"
+DB_PATH = os.environ.get("DB_PATH", "plex_dashboard.db")
 POLL_INTERVAL = 30  # seconds
 
 PLEX_HEADERS = {

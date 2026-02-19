@@ -1,0 +1,22 @@
+services:
+  plex-dashboard:
+    build: .
+    container_name: plex-dashboard
+    restart: unless-stopped
+
+    # Host networking lets the container reach:
+    #   - Plex at 192.168.1.101:32400
+    #   - cli_debrid at 192.168.1.101:5500
+    # The app will bind directly to host port 8080.
+    network_mode: host
+
+    volumes:
+      # SQLite database persists across container rebuilds
+      - ./data:/data
+
+    environment:
+      DB_PATH: /data/plex_dashboard.db
+      # Override Plex / debrid endpoints here if they ever change:
+      # PLEX_URL: http://192.168.1.101:32400
+      # PLEX_TOKEN: 6eMBEX1VddA6wh5LZwFj
+      # DEBRID_URL: http://192.168.1.101:5500
