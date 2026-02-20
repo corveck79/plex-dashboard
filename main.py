@@ -908,6 +908,48 @@ async def api_docker_containers():
         return {"containers": [], "error": str(exc)}
 
 
+@app.get("/api/status")
+async def api_status():
+    cfg = get_config()
+
+    async def ping(url: str, **kwargs) -> bool:
+        try:
+            async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as c:
+                r = await c.get(url, **kwargs)
+                return r.status_code < 500
+        except Exception:
+            return False
+
+    async def docker_running(name: str) -> bool:
+        try:
+            transport = httpx.AsyncHTTPTransport(uds="/var/run/docker.sock")
+            async with httpx.AsyncClient(transport=transport, timeout=3.0) as c:
+                r = await c.get(f"http://docker/containers/{name}/json")
+                return r.status_code == 200 and r.json()["State"]["Running"]
+        except Exception:
+            return False
+
+    async def _false(): return False
+
+    plex, zilean, cli, rd, zurg, rclone = await asyncio.gather(
+        ping(f"{cfg['plex_url']}/identity", headers={"X-Plex-Token": cfg["plex_token"]}),
+        ping(f"{cfg['zilean_url']}/healthchecks/ping") if cfg["zilean_url"] else _false(),
+        ping(f"{cfg['debrid_url']}/queues/api/queue_contents") if cfg["debrid_url"] else _false(),
+        ping("https://api.real-debrid.com/rest/1.0/user", headers={"Authorization": f"Bearer {cfg['rd_token']}"}) if cfg["rd_token"] else _false(),
+        docker_running("zurg"),
+        docker_running("rclone"),
+    )
+
+    return {
+        "Plex":        plex,
+        "Zilean":      zilean,
+        "cli_debrid":  cli,
+        "Real-Debrid": rd,
+        "zurg":        zurg,
+        "rclone":      rclone,
+    }
+
+
 @app.get("/api/zilean")
 async def api_zilean():
     import asyncpg

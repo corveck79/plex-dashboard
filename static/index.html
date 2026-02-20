@@ -83,6 +83,11 @@
      ═══════════════════════════════════════════════════════════════════════ -->
 <div id="panel-live" class="tab-panel active space-y-6">
 
+  <!-- Service status bar -->
+  <div class="card rounded-xl px-5 py-3 flex flex-wrap gap-x-6 gap-y-2" id="status-bar">
+    <span class="text-xs text-gray-500 uppercase tracking-widest self-center">Services</span>
+  </div>
+
   <!-- Stat chips -->
   <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
     <div class="card rounded-xl p-4">
@@ -619,7 +624,23 @@ async function loadLive() {
     loadBandwidth(currentHours),
     loadStats(),
     loadHistory(),
+    loadStatus(),
   ]);
+}
+
+async function loadStatus() {
+  const bar = document.getElementById('status-bar');
+  try {
+    const data = await fetch('/api/status').then(r => r.json());
+    const dots = Object.entries(data).map(([name, ok]) => `
+      <span class="flex items-center gap-1.5">
+        <span class="w-2 h-2 rounded-full ${ok ? 'bg-green-400' : 'bg-red-500'}"></span>
+        <span class="text-sm ${ok ? 'text-gray-300' : 'text-red-400'}">${esc(name)}</span>
+      </span>`).join('');
+    bar.innerHTML = `<span class="text-xs text-gray-500 uppercase tracking-widest self-center mr-2">Services</span>${dots}`;
+  } catch(e) {
+    bar.innerHTML = '<span class="text-xs text-gray-500">Status unavailable</span>';
+  }
 }
 
 async function loadSessions() {
