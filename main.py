@@ -916,20 +916,25 @@ async def api_zilean():
         result["error"] = "ZILEAN_URL not configured"
         return result
     try:
-        async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
             h = await client.get(f"{zilean_url}/healthchecks/ping")
             result["ping_status"] = h.status_code
             result["healthy"] = h.status_code == 200
-            # Try to get an indexed torrent count via a minimal DMM filtered query
+            # Get indexed torrent count via Torznab t=search — returns XML with total= attribute
             try:
-                t = await client.post(
-                    f"{zilean_url}/dmm/filtered",
-                    json={"query": "", "limit": 1},
+                import xml.etree.ElementTree as ET
+                tz = await client.get(
+                    f"{zilean_url}/torznab/api",
+                    params={"t": "search", "q": "", "limit": "1"},
                 )
-                if t.status_code == 200:
-                    data = t.json()
-                    if isinstance(data, dict):
-                        result["torrent_count"] = data.get("totalCount") or data.get("count")
+                if tz.status_code == 200:
+                    root = ET.fromstring(tz.text)
+                    ns = {"torznab": "http://torznab.com/schemas/2015/feed"}
+                    resp_el = root.find(".//torznab:response", ns)
+                    if resp_el is not None:
+                        total = resp_el.get("total")
+                        if total is not None:
+                            result["torrent_count"] = int(total)
             except Exception:
                 pass
     except Exception as exc:
