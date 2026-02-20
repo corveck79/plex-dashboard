@@ -114,6 +114,11 @@ async def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_sys_ts ON system_snapshots(timestamp);
         """)
         await db.commit()
+        # Remove any rd_daily_usage rows where date is a hostname (old bad data)
+        await db.execute(
+            "DELETE FROM rd_daily_usage WHERE date NOT LIKE '____-__-__'"
+        )
+        await db.commit()
     logger.info("Database ready: %s", DB_PATH)
 
 
@@ -302,18 +307,22 @@ async def _poll_rd_once() -> None:
         return
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
+            # /traffic/details returns {"YYYY-MM-DD": {"host": {"downloaded": bytes, "streams": n}}}
             resp = await client.get(
-                "https://api.real-debrid.com/rest/1.0/traffic",
+                "https://api.real-debrid.com/rest/1.0/traffic/details",
                 headers={"Authorization": f"Bearer {rd_token}"},
             )
             resp.raise_for_status()
             traffic = resp.json()
-        # traffic is a dict keyed by date: {"2024-01-01": {"downloaded": bytes, "streams": n}}
-        for date_str, info in traffic.items():
-            dl_bytes = info.get("downloaded", 0) or 0
-            streams  = info.get("streams", 0) or 0
-            dl_gb    = round(dl_bytes / 1024**3, 3)
-            async with aiosqlite.connect(DB_PATH) as db:
+
+        # Aggregate all hosts per day
+        async with aiosqlite.connect(DB_PATH) as db:
+            for date_str, hosts in traffic.items():
+                if not isinstance(hosts, dict):
+                    continue
+                total_bytes   = sum((h.get("downloaded") or 0) for h in hosts.values())
+                total_streams = sum((h.get("streams")    or 0) for h in hosts.values())
+                dl_gb = round(total_bytes / 1024**3, 3)
                 await db.execute(
                     """
                     INSERT INTO rd_daily_usage (date, downloaded_gb, streams)
@@ -322,9 +331,9 @@ async def _poll_rd_once() -> None:
                         downloaded_gb = excluded.downloaded_gb,
                         streams       = excluded.streams
                     """,
-                    (date_str, dl_gb, streams),
+                    (date_str, dl_gb, total_streams),
                 )
-                await db.commit()
+            await db.commit()
         logger.info("RD traffic updated, %d day(s)", len(traffic))
     except Exception as exc:
         logger.warning("RD poll error: %s", exc)
