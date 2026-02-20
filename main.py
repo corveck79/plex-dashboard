@@ -920,23 +920,16 @@ async def api_zilean():
             h = await client.get(f"{zilean_url}/healthchecks/ping")
             result["ping_status"] = h.status_code
             result["healthy"] = h.status_code == 200
-            # Get indexed torrent count via Torznab t=search — returns XML with total= attribute
+            # Get recently indexed torrent count via /dmm/filtered (returns up to 200 recent entries)
             try:
-                import xml.etree.ElementTree as ET
-                tz = await client.get(
-                    f"{zilean_url}/torznab/api",
-                    params={"t": "search", "q": "", "limit": "1"},
-                )
-                if tz.status_code == 200:
-                    root = ET.fromstring(tz.text)
-                    ns = {"torznab": "http://torznab.com/schemas/2015/feed"}
-                    resp_el = root.find(".//torznab:response", ns)
-                    if resp_el is not None:
-                        total = resp_el.get("total")
-                        if total is not None:
-                            result["torrent_count"] = int(total)
-            except Exception:
-                pass
+                import json as _json
+                dmm = await client.get(f"{zilean_url}/dmm/filtered", timeout=15.0)
+                result["dmm_status"] = dmm.status_code
+                if dmm.status_code == 200:
+                    items = _json.loads(dmm.text)
+                    result["torrent_count"] = len(items)
+            except Exception as _e:
+                result["dmm_error"] = str(_e)
     except Exception as exc:
         result["error"] = str(exc)
     return result

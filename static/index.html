@@ -1320,7 +1320,7 @@ async function loadZilean() {
       </div>
       ${data.torrent_count !== null && data.torrent_count !== undefined ? `
         <div class="mt-3">
-          <p class="text-xs text-gray-500 uppercase tracking-widest">Indexed Torrents</p>
+          <p class="text-xs text-gray-500 uppercase tracking-widest">Recently Indexed</p>
           <p class="text-2xl font-bold text-purple-400 mt-0.5">
             ${typeof data.torrent_count === 'object'
                 ? JSON.stringify(data.torrent_count)
