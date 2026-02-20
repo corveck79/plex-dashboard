@@ -1319,9 +1319,16 @@ async function loadZilean() {
         </span>
       </div>
       ${data.torrent_count !== null && data.torrent_count !== undefined ? `
-        <div class="mt-3">
-          <p class="text-xs text-gray-500 uppercase tracking-widest">Indexed Torrents</p>
-          <p class="text-2xl font-bold text-purple-400 mt-0.5">${Number(data.torrent_count).toLocaleString()}</p>
+        <div class="mt-3 flex gap-6">
+          <div>
+            <p class="text-xs text-gray-500 uppercase tracking-widest">Indexed Torrents</p>
+            <p class="text-2xl font-bold text-purple-400 mt-0.5">${Number(data.torrent_count).toLocaleString()}</p>
+          </div>
+          ${data.today_added != null ? `
+          <div>
+            <p class="text-xs text-gray-500 uppercase tracking-widest">Today Added</p>
+            <p class="text-2xl font-bold text-green-400 mt-0.5">+${Number(data.today_added).toLocaleString()}</p>
+          </div>` : ''}
         </div>` : ''}
       ${data.categories ? `
         <div class="mt-3 flex flex-wrap gap-2">

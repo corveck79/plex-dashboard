@@ -940,8 +940,12 @@ async def api_zilean():
                             rows = await conn.fetch(
                                 'SELECT "Category", COUNT(*) AS cnt FROM "Torrents" GROUP BY "Category" ORDER BY cnt DESC'
                             )
+                            today = await conn.fetchval(
+                                'SELECT COUNT(*) FROM "Torrents" WHERE "IngestedAt" >= CURRENT_DATE'
+                            )
                             result["torrent_count"] = total
                             result["categories"] = {r["Category"]: r["cnt"] for r in rows}
+                            result["today_added"] = today
                         finally:
                             await conn.close()
             except Exception as _e:
