@@ -7,6 +7,7 @@ A self-hosted, real-time monitoring dashboard for your Plex media server and sur
 ## Features
 
 ### 🔴 Live tab
+- **Service status bar** — green/red dot per service: Plex, Zilean, cli_debrid, Riven, Real-Debrid, zurg, rclone
 - Active Plex streams with progress bars, playback state, platform and player info
 - Per-session transcode decision (direct / copy / transcode)
 - Total bandwidth in real time
@@ -35,7 +36,11 @@ A self-hosted, real-time monitoring dashboard for your Plex media server and sur
 - Live gauges: CPU %, RAM (used / total GB), Disk %, CPU temperature
 - Network RX / TX in Mbps
 - CPU + RAM history chart (last 3 hours)
-- Zilean status: healthy indicator + indexed torrent count
+- Zilean status card:
+  - Healthy indicator
+  - Total indexed torrents (direct from PostgreSQL)
+  - Today added count
+  - Category pills: Movies / TV / XXX
 - Docker container overview: name, image, state, status
 
 ---
@@ -46,9 +51,10 @@ A self-hosted, real-time monitoring dashboard for your Plex media server and sur
 |---|---|---|
 | **Plex Media Server** | ✅ Yes | Needs URL + token |
 | **cli_debrid** | Optional | Probes common API paths automatically |
+| **Riven** | Optional | Auto-detected via Docker socket; set `riven_api_key` in config |
 | **Real-Debrid** | Optional | API token needed for usage stats |
-| **Zilean** | Optional | Set URL; dashboard shows health + torrent count |
-| **Docker** | Optional | Mount the Docker socket for container overview |
+| **Zilean** | Optional | Set URL; queries PostgreSQL directly for real torrent counts |
+| **Docker** | Optional | Mount the Docker socket for container overview + auto-detection |
 | **NAS disk** | Optional | Mount any path for disk usage monitoring |
 
 ---
@@ -84,12 +90,13 @@ cp config.example.json config.json
 
 ```json
 {
-  "plex_url":   "http://YOUR_NAS_IP:32400",
-  "plex_token": "your-plex-token-here",
-  "debrid_url": "http://YOUR_NAS_IP:5500",
-  "zilean_url": "http://YOUR_NAS_IP:8181",
-  "rd_token":   "",
-  "disk_path":  "/nas"
+  "plex_url":      "http://YOUR_NAS_IP:32400",
+  "plex_token":    "your-plex-token-here",
+  "debrid_url":    "http://YOUR_NAS_IP:5500",
+  "zilean_url":    "http://YOUR_NAS_IP:8181",
+  "rd_token":      "",
+  "disk_path":     "/nas",
+  "riven_api_key": ""
 }
 ```
 
@@ -101,14 +108,17 @@ cp config.example.json config.json
 | `zilean_url` | Optional | Zilean torrent indexer address |
 | `rd_token` | Optional | Real-Debrid API token (for usage chart) |
 | `disk_path` | Optional | Mount path to monitor for disk usage (default `/nas`) |
+| `riven_api_key` | Optional | Riven API key — only needed if running Riven; URL is auto-detected via Docker socket |
 
 To verify the config is loaded correctly, open `http://YOUR_NAS_IP:8080/api/config` — it shows active values with tokens masked.
 
 > `config.json` is gitignored and never committed to the repo.
 
-### Docker socket (container overview)
+### Docker socket (container overview + auto-detection)
 
-To enable the Docker tab, mount the socket:
+The Docker socket is required for:
+- Container overview in the System tab
+- Auto-detecting Riven and showing its status
 
 ```yaml
 volumes:
@@ -122,6 +132,22 @@ volumes:
 ```yaml
 volumes:
   - /volume1:/nas:ro   # adjust /volume1 to your NAS volume path
+```
+
+### Zilean PostgreSQL
+
+The dashboard connects directly to `zilean_postgres` via the Docker socket to get real torrent counts (not limited by the API's 200-item cap). No extra config needed — credentials are auto-read from the container.
+
+### Riven auto-detection
+
+If a container named `riven` is running, the dashboard automatically:
+- Detects its host port via Docker socket
+- Shows it as green in the service status bar
+- Shows cli_debrid as red (and vice versa)
+
+To enable authenticated Riven API access, add your API key to `config.json`:
+```json
+"riven_api_key": "your-32-char-key-here"
 ```
 
 ---
@@ -143,6 +169,7 @@ Or: **Settings → Troubleshooting → Your Token** (older Plex versions).
 | FastAPI | API server |
 | aiosqlite | Async SQLite storage |
 | httpx | HTTP client (Plex, RD, Zilean, Docker socket) |
+| asyncpg | PostgreSQL client (Zilean database) |
 | psutil | System metrics (CPU, RAM, disk, network, temp) |
 | Chart.js | All charts in the browser |
 | Tailwind CSS | Styling |
