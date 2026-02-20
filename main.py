@@ -778,24 +778,18 @@ async def api_zilean():
         return result
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            # Try common healthcheck paths
-            healthy = False
-            for hpath in ("/healthcheck", "/healthz", "/health"):
-                try:
-                    h = await client.get(f"{zilean_url}{hpath}")
-                    if h.status_code == 200:
-                        healthy = True
-                        break
-                except Exception:
-                    continue
-            result["healthy"] = healthy
+            h = await client.get(f"{zilean_url}/healthchecks/ping")
+            result["healthy"] = h.status_code == 200
+            # Try to get an indexed torrent count via a minimal DMM filtered query
             try:
-                t = await client.get(f"{zilean_url}/v1/api/torrents/count")
+                t = await client.post(
+                    f"{zilean_url}/dmm/filtered",
+                    json={"query": "", "limit": 1},
+                )
                 if t.status_code == 200:
                     data = t.json()
-                    result["torrent_count"] = (
-                        data.get("count") or data.get("torrents") or data
-                    )
+                    if isinstance(data, dict):
+                        result["torrent_count"] = data.get("totalCount") or data.get("count")
             except Exception:
                 pass
     except Exception as exc:

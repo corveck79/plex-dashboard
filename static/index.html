@@ -1075,6 +1075,7 @@ async function loadQueue() {
   grid.innerHTML = '<div class="col-span-full text-center py-10 text-gray-600 text-sm">Loading…</div>';
   try {
     const res  = await fetch('/api/debrid');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     _allDebridData = data;
 
@@ -1093,7 +1094,7 @@ async function loadQueue() {
     renderQueueItems(currentCategory);
   } catch(e) {
     document.getElementById('queue-grid').innerHTML =
-      '<div class="col-span-full text-center py-10 text-red-400 text-sm">Failed to load queue</div>';
+      `<div class="col-span-full text-center py-10 text-red-400 text-sm">Failed to load queue: ${e.message}</div>`;
     console.error(e);
   }
 }
