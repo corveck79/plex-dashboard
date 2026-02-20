@@ -457,81 +457,63 @@ async def api_stats():
 
 @app.get("/api/debrid")
 async def api_debrid():
-    results: dict = {}
-    first_error: str | None = None
-
-    probe_paths = [
-        "/api/queue",
-        "/queue",
-        "/api/status",
-        "/status",
-        "/api/downloads",
-        "/downloads",
-        "/api/items",
-        "/",
-    ]
-
     debrid_url = get_config()["debrid_url"]
-    async with httpx.AsyncClient(timeout=8.0) as client:
-        for path in probe_paths:
-            try:
-                resp = await client.get(f"{debrid_url}{path}")
-                if resp.status_code == 200:
-                    ct = resp.headers.get("content-type", "")
-                    if "json" in ct:
-                        results[path] = resp.json()
-                    elif "text" in ct and len(resp.text) < 2000:
-                        results[path] = {"_text": resp.text}
-            except Exception as exc:
-                if first_error is None:
-                    first_error = str(exc)
+    error: str | None = None
 
-    # Extract items array from whichever endpoint responded
-    items = None
-    for payload in results.values():
-        if isinstance(payload, list):
-            items = payload
-            break
-        if isinstance(payload, dict):
-            for key in ("queue", "downloads", "items", "data", "torrents", "results"):
-                if isinstance(payload.get(key), list):
-                    items = payload[key]
-                    break
-            if items is not None:
-                break
-
-    categories = {
-        "Wanted": [], "Upgrading": [], "Checking": [],
-        "Downloading": [], "Completed": [], "Failed": [], "Other": [],
+    # cli_debrid queue name → our category
+    QUEUE_MAP = {
+        "Wanted":      "Wanted",
+        "Unreleased":  "Wanted",
+        "Pre_release": "Wanted",
+        "Upgrading":   "Upgrading",
+        "Checking":    "Checking",
+        "Scraping":    "Checking",
+        "Downloading": "Downloading",
+        "Adding":      "Downloading",
+        "Completed":   "Completed",
+        "Symlinked":   "Completed",
+        "Blacklisted": "Failed",
+        "Failed":      "Failed",
+        "Sleeping":    "Other",
     }
-    if items:
-        for item in items:
-            status = (item.get("state") or item.get("status") or "").lower()
-            if "want" in status:
-                categories["Wanted"].append(item)
-            elif "upgrad" in status:
-                categories["Upgrading"].append(item)
-            elif "check" in status or "scraping" in status:
-                categories["Checking"].append(item)
-            elif "download" in status:
-                categories["Downloading"].append(item)
-            elif "complet" in status or "symlink" in status:
-                categories["Completed"].append(item)
-            elif "fail" in status or "error" in status:
-                categories["Failed"].append(item)
+
+    categories = {k: [] for k in ["Wanted","Upgrading","Checking","Downloading","Completed","Failed","Other"]}
+    all_items: list = []
+    queue_counts: dict = {}
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(f"{debrid_url}/queues/api/queue_contents")
+            if resp.status_code == 200:
+                data = resp.json()
+                contents    = data.get("contents", {})
+                queue_counts = data.get("queue_counts", {})
+
+                for queue_name, items in contents.items():
+                    cat = QUEUE_MAP.get(queue_name, "Other")
+                    for item in items:
+                        # Normalise display fields
+                        item["_queue"]  = queue_name
+                        item["name"]    = item.get("title") or item.get("name") or "Unknown"
+                        item["status"]  = queue_name
+                        item["progress"] = item.get("progress")
+                        categories[cat].append(item)
+                        all_items.append(item)
             else:
-                categories["Other"].append(item)
+                error = f"HTTP {resp.status_code} from {debrid_url}/queues/api/queue_contents"
+    except Exception as exc:
+        error = str(exc)
 
     counts = {k: len(v) for k, v in categories.items()}
 
     return {
-        "endpoints": results,
-        "url": debrid_url,
-        "error": first_error if not results else None,
-        "items": items or [],
-        "categories": categories,
-        "counts": counts,
-        "total": len(items) if items else 0,
+        "url":          debrid_url,
+        "error":        error,
+        "items":        all_items,
+        "categories":   categories,
+        "counts":       counts,
+        "queue_counts": queue_counts,
+        "total":        len(all_items),
     }
 
 

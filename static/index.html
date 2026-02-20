@@ -1133,14 +1133,16 @@ function renderQueueItems(cat) {
   const catColor = CAT_COLOR[cat] || 'text-gray-400';
 
   grid.innerHTML = items.slice(0, 60).map(item => {
-    const name   = item.name || item.filename || item.title || item.id || 'Unknown';
-    const status = item.status || item.state || '';
+    const name   = item.title || item.name || item.filename || item.id || 'Unknown';
+    const queue  = item._queue || item.status || item.state || '';
+    const year   = item.year ? ` (${item.year})` : '';
+    const type   = item.type ? (item.type === 'movie' ? '🎬' : '📺') : '';
     const pct    = item.progress ?? item.percent ?? item.percentage ?? null;
-    const sc     = CAT_COLOR[_categorise(status)] || 'text-gray-400';
+    const sc     = CAT_COLOR[queue] || CAT_COLOR[_categorise(queue)] || 'text-gray-400';
     return `
     <div class="card rounded-xl p-3">
-      <p class="text-sm text-white font-medium truncate mb-1" title="${esc(name)}">${esc(name)}</p>
-      ${status ? `<p class="text-xs ${sc} mb-1">${esc(status)}</p>` : ''}
+      <p class="text-sm text-white font-medium truncate mb-0.5" title="${esc(name)}">${type} ${esc(name)}${esc(year)}</p>
+      ${queue ? `<p class="text-xs ${sc} mb-1">${esc(queue)}</p>` : ''}
       ${pct !== null ? `
         <div class="mt-1 h-1.5 rounded-full overflow-hidden" style="background:#2a3040">
           <div class="h-full bg-purple-500 rounded-full progress-fill" style="width:${Math.min(100,+pct)}%"></div>
