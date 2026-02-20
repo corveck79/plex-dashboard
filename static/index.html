@@ -1320,11 +1320,16 @@ async function loadZilean() {
       </div>
       ${data.torrent_count !== null && data.torrent_count !== undefined ? `
         <div class="mt-3">
-          <p class="text-xs text-gray-500 uppercase tracking-widest">Recently Indexed</p>
-          <p class="text-2xl font-bold text-purple-400 mt-0.5">
-            ${typeof data.torrent_count === 'object'
-                ? JSON.stringify(data.torrent_count)
-                : Number(data.torrent_count).toLocaleString()}</p>
+          <p class="text-xs text-gray-500 uppercase tracking-widest">Indexed Torrents</p>
+          <p class="text-2xl font-bold text-purple-400 mt-0.5">${Number(data.torrent_count).toLocaleString()}</p>
+        </div>` : ''}
+      ${data.categories ? `
+        <div class="mt-3 flex flex-wrap gap-2">
+          ${Object.entries(data.categories).map(([cat, cnt]) => {
+            const label = cat === 'tvSeries' ? 'TV' : cat === 'movie' ? 'Movies' : cat === 'xxx' ? 'XXX' : cat;
+            const color = cat === 'tvSeries' ? 'bg-blue-900 text-blue-300' : cat === 'movie' ? 'bg-purple-900 text-purple-300' : 'bg-red-900 text-red-300';
+            return `<span class="text-xs px-2 py-1 rounded ${color}">${label} ${Number(cnt).toLocaleString()}</span>`;
+          }).join('')}
         </div>` : ''}
       ${data.error ? `<p class="text-xs text-gray-600 mt-2">${esc(data.error)}</p>` : ''}`;
   } catch(e) {

@@ -910,8 +910,9 @@ async def api_docker_containers():
 
 @app.get("/api/zilean")
 async def api_zilean():
+    import asyncpg
     zilean_url = get_config()["zilean_url"]
-    result = {"healthy": False, "torrent_count": None, "error": None, "url": zilean_url}
+    result = {"healthy": False, "torrent_count": None, "categories": None, "error": None, "url": zilean_url}
     if not zilean_url:
         result["error"] = "ZILEAN_URL not configured"
         return result
@@ -920,16 +921,31 @@ async def api_zilean():
             h = await client.get(f"{zilean_url}/healthchecks/ping")
             result["ping_status"] = h.status_code
             result["healthy"] = h.status_code == 200
-            # Get recently indexed torrent count via /dmm/filtered (returns up to 200 recent entries)
+
+            # Get total torrent count + category breakdown from zilean_postgres via Docker socket
             try:
-                import json as _json
-                dmm = await client.get(f"{zilean_url}/dmm/filtered", timeout=15.0)
-                result["dmm_status"] = dmm.status_code
-                if dmm.status_code == 200:
-                    items = _json.loads(dmm.text)
-                    result["torrent_count"] = len(items)
+                transport = httpx.AsyncHTTPTransport(uds="/var/run/docker.sock")
+                async with httpx.AsyncClient(transport=transport, base_url="http://docker") as docker:
+                    r = await docker.get("/containers/zilean_postgres/json")
+                    if r.status_code == 200:
+                        networks = r.json()["NetworkSettings"]["Networks"]
+                        pg_ip = next(iter(networks.values()))["IPAddress"]
+                        conn = await asyncpg.connect(
+                            host=pg_ip, port=5432,
+                            user="postgres", password="postgres", database="zilean",
+                            timeout=10,
+                        )
+                        try:
+                            total = await conn.fetchval('SELECT COUNT(*) FROM "Torrents"')
+                            rows = await conn.fetch(
+                                'SELECT "Category", COUNT(*) AS cnt FROM "Torrents" GROUP BY "Category" ORDER BY cnt DESC'
+                            )
+                            result["torrent_count"] = total
+                            result["categories"] = {r["Category"]: r["cnt"] for r in rows}
+                        finally:
+                            await conn.close()
             except Exception as _e:
-                result["dmm_error"] = str(_e)
+                result["pg_error"] = str(_e)
     except Exception as exc:
         result["error"] = str(exc)
     return result
