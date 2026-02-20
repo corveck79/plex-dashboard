@@ -50,10 +50,11 @@ def get_config() -> dict:
     return {
         "plex_url":   c.get("plex_url")   or os.environ.get("PLEX_URL",   ""),
         "plex_token": c.get("plex_token") or os.environ.get("PLEX_TOKEN", ""),
-        "debrid_url": c.get("debrid_url") or os.environ.get("DEBRID_URL", ""),
-        "zilean_url": c.get("zilean_url") or os.environ.get("ZILEAN_URL", ""),
-        "rd_token":   c.get("rd_token")   or os.environ.get("RD_TOKEN",   ""),
-        "disk_path":  c.get("disk_path")  or os.environ.get("DISK_PATH",  "/nas"),
+        "debrid_url":     c.get("debrid_url")     or os.environ.get("DEBRID_URL",     ""),
+        "zilean_url":     c.get("zilean_url")     or os.environ.get("ZILEAN_URL",     ""),
+        "rd_token":       c.get("rd_token")       or os.environ.get("RD_TOKEN",       ""),
+        "disk_path":      c.get("disk_path")      or os.environ.get("DISK_PATH",      "/nas"),
+        "riven_api_key":  c.get("riven_api_key")  or os.environ.get("RIVEN_API_KEY",  ""),
     }
 
 # Module-level dict for network rate calculation
@@ -908,6 +909,25 @@ async def api_docker_containers():
         return {"containers": [], "error": str(exc)}
 
 
+async def _get_riven_url() -> str | None:
+    """Auto-detect Riven's host URL via Docker socket port mappings."""
+    try:
+        transport = httpx.AsyncHTTPTransport(uds="/var/run/docker.sock")
+        async with httpx.AsyncClient(transport=transport, timeout=3.0) as c:
+            r = await c.get("http://docker/containers/riven/json")
+            if r.status_code != 200:
+                return None
+            info = r.json()
+            if not info["State"]["Running"]:
+                return None
+            for _container_port, bindings in (info["NetworkSettings"]["Ports"] or {}).items():
+                if bindings:
+                    return f"http://localhost:{bindings[0]['HostPort']}"
+    except Exception:
+        pass
+    return None
+
+
 @app.get("/api/status")
 async def api_status():
     cfg = get_config()
@@ -929,12 +949,22 @@ async def api_status():
         except Exception:
             return False
 
+    async def check_riven() -> bool:
+        url = await _get_riven_url()
+        if not url:
+            return False
+        headers = {}
+        if cfg["riven_api_key"]:
+            headers["x-api-key"] = cfg["riven_api_key"]
+        return await ping(f"{url}/api/v1/health", headers=headers)
+
     async def _false(): return False
 
-    plex, zilean, cli, rd, zurg, rclone = await asyncio.gather(
+    plex, zilean, cli, riven, rd, zurg, rclone = await asyncio.gather(
         ping(f"{cfg['plex_url']}/identity", headers={"X-Plex-Token": cfg["plex_token"]}),
         ping(f"{cfg['zilean_url']}/healthchecks/ping") if cfg["zilean_url"] else _false(),
         ping(f"{cfg['debrid_url']}/queues/api/queue_contents") if cfg["debrid_url"] else _false(),
+        check_riven(),
         ping("https://api.real-debrid.com/rest/1.0/user", headers={"Authorization": f"Bearer {cfg['rd_token']}"}) if cfg["rd_token"] else _false(),
         docker_running("zurg"),
         docker_running("rclone"),
@@ -944,6 +974,7 @@ async def api_status():
         "Plex":        plex,
         "Zilean":      zilean,
         "cli_debrid":  cli,
+        "Riven":       riven,
         "Real-Debrid": rd,
         "zurg":        zurg,
         "rclone":      rclone,
