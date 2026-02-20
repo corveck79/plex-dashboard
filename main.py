@@ -1,8 +1,10 @@
 import asyncio
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import aiosqlite
 import httpx
@@ -16,19 +18,43 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-PLEX_URL   = os.environ.get("PLEX_URL",   "")
-PLEX_TOKEN = os.environ.get("PLEX_TOKEN", "")
-DEBRID_URL = os.environ.get("DEBRID_URL", "")
-DB_PATH    = os.environ.get("DB_PATH",    "plex_dashboard.db")
-RD_TOKEN   = os.environ.get("RD_TOKEN",   "")
-ZILEAN_URL = os.environ.get("ZILEAN_URL", "")
-DISK_PATH  = os.environ.get("DISK_PATH",  "/nas")
+# DB_PATH is the only value that must be known before config is loaded
+DB_PATH       = os.environ.get("DB_PATH", "plex_dashboard.db")
+CONFIG_PATH   = os.environ.get("CONFIG_PATH", "/config/config.json")
 POLL_INTERVAL = 30  # seconds
 
-PLEX_HEADERS = {
-    "X-Plex-Token": PLEX_TOKEN,
-    "Accept": "application/json",
-}
+# ---------------------------------------------------------------------------
+# Dynamic config — re-reads config.json whenever the file changes on disk.
+# Falls back to environment variables so docker-compose env vars still work.
+# ---------------------------------------------------------------------------
+
+_config_cache: dict = {}
+_config_mtime: float = 0.0
+
+
+def get_config() -> dict:
+    global _config_cache, _config_mtime
+    try:
+        p = Path(CONFIG_PATH)
+        mtime = p.stat().st_mtime
+        if mtime != _config_mtime:
+            _config_cache = json.loads(p.read_text())
+            _config_mtime = mtime
+            logger.info("Config reloaded from %s", CONFIG_PATH)
+    except FileNotFoundError:
+        pass  # no config file — use env vars only
+    except Exception as exc:
+        logger.warning("Config read error: %s", exc)
+
+    c = _config_cache
+    return {
+        "plex_url":   c.get("plex_url")   or os.environ.get("PLEX_URL",   ""),
+        "plex_token": c.get("plex_token") or os.environ.get("PLEX_TOKEN", ""),
+        "debrid_url": c.get("debrid_url") or os.environ.get("DEBRID_URL", ""),
+        "zilean_url": c.get("zilean_url") or os.environ.get("ZILEAN_URL", ""),
+        "rd_token":   c.get("rd_token")   or os.environ.get("RD_TOKEN",   ""),
+        "disk_path":  c.get("disk_path")  or os.environ.get("DISK_PATH",  "/nas"),
+    }
 
 # Module-level dict for network rate calculation
 _prev_net: dict = {}
@@ -138,7 +164,9 @@ def _parse_sessions(data: dict) -> list[dict]:
 
 
 async def fetch_plex_sessions(client: httpx.AsyncClient) -> list[dict]:
-    resp = await client.get(f"{PLEX_URL}/status/sessions", headers=PLEX_HEADERS)
+    cfg = get_config()
+    headers = {"X-Plex-Token": cfg["plex_token"], "Accept": "application/json"}
+    resp = await client.get(f"{cfg['plex_url']}/status/sessions", headers=headers)
     resp.raise_for_status()
     return _parse_sessions(resp.json())
 
@@ -155,8 +183,9 @@ def _get_system_stats() -> dict:
     ram_pct = mem.percent
 
     # Disk usage with fallbacks
+    disk_path = get_config()["disk_path"]
     disk_pct = 0.0
-    for path in [DISK_PATH, "/data", "/"]:
+    for path in [disk_path, "/data", "/"]:
         try:
             du = psutil.disk_usage(path)
             disk_pct = du.percent
@@ -268,14 +297,14 @@ async def _poll_system_once() -> None:
 
 
 async def _poll_rd_once() -> None:
-    if not RD_TOKEN:
+    rd_token = get_config()["rd_token"]
+    if not rd_token:
         return
-    today = datetime.utcnow().strftime("%Y-%m-%d")
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(
                 "https://api.real-debrid.com/rest/1.0/traffic",
-                headers={"Authorization": f"Bearer {RD_TOKEN}"},
+                headers={"Authorization": f"Bearer {rd_token}"},
             )
             resp.raise_for_status()
             traffic = resp.json()
@@ -442,10 +471,11 @@ async def api_debrid():
         "/",
     ]
 
+    debrid_url = get_config()["debrid_url"]
     async with httpx.AsyncClient(timeout=8.0) as client:
         for path in probe_paths:
             try:
-                resp = await client.get(f"{DEBRID_URL}{path}")
+                resp = await client.get(f"{debrid_url}{path}")
                 if resp.status_code == 200:
                     ct = resp.headers.get("content-type", "")
                     if "json" in ct:
@@ -498,6 +528,7 @@ async def api_debrid():
         "endpoints": results,
         "url": DEBRID_URL,
         "error": first_error if not results else None,
+        "url": debrid_url,
         "items": items or [],
         "categories": categories,
         "counts": counts,
@@ -512,9 +543,11 @@ async def api_debrid():
 @app.get("/api/plex/libraries")
 async def api_plex_libraries():
     try:
+        cfg = get_config()
+        plex_headers = {"X-Plex-Token": cfg["plex_token"], "Accept": "application/json"}
         async with httpx.AsyncClient(timeout=10.0) as client:
             # Get library sections
-            r = await client.get(f"{PLEX_URL}/library/sections", headers=PLEX_HEADERS)
+            r = await client.get(f"{cfg['plex_url']}/library/sections", headers=plex_headers)
             r.raise_for_status()
             sections_data = r.json().get("MediaContainer", {}).get("Directory", [])
 
@@ -523,12 +556,11 @@ async def api_plex_libraries():
                 sec_key = sec.get("key")
                 sec_type = sec.get("type", "")
                 sec_title = sec.get("title", "")
-                # Get count for this section
                 count = 0
                 try:
                     cr = await client.get(
-                        f"{PLEX_URL}/library/sections/{sec_key}/all",
-                        headers=PLEX_HEADERS,
+                        f"{cfg['plex_url']}/library/sections/{sec_key}/all",
+                        headers=plex_headers,
                         params={"X-Plex-Container-Start": 0, "X-Plex-Container-Size": 0},
                     )
                     count = cr.json().get("MediaContainer", {}).get("totalSize", 0)
@@ -540,8 +572,8 @@ async def api_plex_libraries():
             recent = []
             try:
                 rr = await client.get(
-                    f"{PLEX_URL}/library/recentlyAdded",
-                    headers=PLEX_HEADERS,
+                    f"{cfg['plex_url']}/library/recentlyAdded",
+                    headers=plex_headers,
                     params={"X-Plex-Container-Size": 15},
                 )
                 items = rr.json().get("MediaContainer", {}).get("Metadata", [])
@@ -681,7 +713,7 @@ async def api_rd_usage(days: int = 30):
             (since,),
         ) as cur:
             rows = [dict(r) for r in await cur.fetchall()]
-    return {"data": rows, "days": days, "has_token": bool(RD_TOKEN)}
+    return {"data": rows, "days": days, "has_token": bool(get_config()["rd_token"])}
 
 
 @app.get("/api/system/current")
@@ -739,13 +771,26 @@ async def api_docker_containers():
 
 @app.get("/api/zilean")
 async def api_zilean():
-    result = {"healthy": False, "torrent_count": None, "error": None}
+    zilean_url = get_config()["zilean_url"]
+    result = {"healthy": False, "torrent_count": None, "error": None, "url": zilean_url}
+    if not zilean_url:
+        result["error"] = "ZILEAN_URL not configured"
+        return result
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            h = await client.get(f"{ZILEAN_URL}/healthcheck")
-            result["healthy"] = h.status_code == 200
+            # Try common healthcheck paths
+            healthy = False
+            for hpath in ("/healthcheck", "/healthz", "/health"):
+                try:
+                    h = await client.get(f"{zilean_url}{hpath}")
+                    if h.status_code == 200:
+                        healthy = True
+                        break
+                except Exception:
+                    continue
+            result["healthy"] = healthy
             try:
-                t = await client.get(f"{ZILEAN_URL}/v1/api/torrents/count")
+                t = await client.get(f"{zilean_url}/v1/api/torrents/count")
                 if t.status_code == 200:
                     data = t.json()
                     result["torrent_count"] = (
@@ -756,6 +801,23 @@ async def api_zilean():
     except Exception as exc:
         result["error"] = str(exc)
     return result
+
+
+@app.get("/api/config")
+async def api_config():
+    """Return active config (tokens masked) so you can verify the file is loaded."""
+    cfg = get_config()
+    def mask(v: str) -> str:
+        return v[:4] + "…" + v[-4:] if len(v) > 8 else ("set" if v else "not set")
+    return {
+        "config_file":  CONFIG_PATH,
+        "plex_url":     cfg["plex_url"],
+        "plex_token":   mask(cfg["plex_token"]),
+        "debrid_url":   cfg["debrid_url"],
+        "zilean_url":   cfg["zilean_url"],
+        "rd_token":     mask(cfg["rd_token"]),
+        "disk_path":    cfg["disk_path"],
+    }
 
 
 # Static files must be mounted last so API routes take priority.

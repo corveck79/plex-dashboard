@@ -72,29 +72,39 @@ Open `http://YOUR-NAS-IP:8080` in a browser.
 
 ## Configuration
 
-All settings are environment variables in `docker-compose.yml`. No config file needed.
+Settings live in `config.json` — **no restart or rebuild needed** when you change it.
+The app detects file changes automatically and reloads on the next request.
 
-```yaml
-environment:
-  # Required — your Plex server
-  PLEX_URL:   http://NAS_IP:32400
-  PLEX_TOKEN: your-plex-token          # Settings → Troubleshooting → Your Token
+### Setup
 
-  # Optional — cli_debrid
-  DEBRID_URL: http://NAS_IP:5500
-
-  # Optional — Real-Debrid usage tracking (leave commented out to disable)
-  # RD_TOKEN: your-real-debrid-api-token
-
-  # Optional — Zilean torrent indexer
-  ZILEAN_URL: http://NAS_IP:8181
-
-  # Optional — disk path to monitor (default: /nas)
-  DISK_PATH: /nas
-
-  # Internal — SQLite database location
-  DB_PATH: /data/plex_dashboard.db
+```bash
+cp config.example.json config.json
+# edit config.json with your values
 ```
+
+```json
+{
+  "plex_url":   "http://YOUR_NAS_IP:32400",
+  "plex_token": "your-plex-token-here",
+  "debrid_url": "http://YOUR_NAS_IP:5500",
+  "zilean_url": "http://YOUR_NAS_IP:8181",
+  "rd_token":   "",
+  "disk_path":  "/nas"
+}
+```
+
+| Key | Required | Description |
+|---|---|---|
+| `plex_url` | ✅ | Plex server address |
+| `plex_token` | ✅ | Plex authentication token |
+| `debrid_url` | Optional | cli_debrid API address |
+| `zilean_url` | Optional | Zilean torrent indexer address |
+| `rd_token` | Optional | Real-Debrid API token (for usage chart) |
+| `disk_path` | Optional | Mount path to monitor for disk usage (default `/nas`) |
+
+To verify the config is loaded correctly, open `http://YOUR_NAS_IP:8080/api/config` — it shows active values with tokens masked.
+
+> `config.json` is gitignored and never committed to the repo.
 
 ### Docker socket (container overview)
 

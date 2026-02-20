@@ -24,6 +24,9 @@ ENV/
 .env
 .env.*
 
+# Config with real values (use config.example.json as template)
+config.json
+
 # IDE
 .vscode/
 .idea/

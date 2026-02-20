@@ -12,6 +12,8 @@ services:
     volumes:
       # SQLite database — persists across container rebuilds
       - ./data:/data
+      # Config file — edit this on the host, the app reloads it automatically
+      - ./config.json:/config/config.json:ro
       # NAS storage for disk usage monitoring (read-only)
       # Adjust the host path to match your NAS volume, e.g. /volume2
       - /volume1:/nas:ro
@@ -20,18 +22,5 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
 
     environment:
-      DB_PATH:   /data/plex_dashboard.db
-      DISK_PATH: /nas
-
-      # ── Required ────────────────────────────────────────────────────────
-      PLEX_URL:   http://YOUR_NAS_IP:32400
-      PLEX_TOKEN: your-plex-token-here
-
-      # ── Optional — cli_debrid ────────────────────────────────────────────
-      DEBRID_URL: http://YOUR_NAS_IP:5500
-
-      # ── Optional — Zilean torrent indexer ───────────────────────────────
-      ZILEAN_URL: http://YOUR_NAS_IP:8181
-
-      # ── Optional — Real-Debrid usage tracking ───────────────────────────
-      # RD_TOKEN: your-real-debrid-api-token
+      DB_PATH:     /data/plex_dashboard.db
+      CONFIG_PATH: /config/config.json
