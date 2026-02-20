@@ -301,60 +301,94 @@ async def _poll_system_once() -> None:
         await db.commit()
 
 
+async def _upsert_rd_details(db: aiosqlite.Connection, details: dict) -> int:
+    """Parse /traffic/details JSON and upsert into rd_daily_usage. Returns rows written."""
+    count = 0
+    for date_str, hosts in details.items():
+        if not isinstance(hosts, dict):
+            continue
+        total_bytes   = 0
+        total_streams = 0
+        for h in hosts.values():
+            if isinstance(h, dict):
+                total_bytes   += h.get("downloaded") or 0
+                total_streams += h.get("streams")    or 0
+            elif isinstance(h, (int, float)):
+                total_bytes += h
+        await db.execute(
+            """
+            INSERT INTO rd_daily_usage (date, downloaded_gb, streams)
+            VALUES (?,?,?)
+            ON CONFLICT(date) DO UPDATE SET
+                downloaded_gb = excluded.downloaded_gb,
+                streams       = excluded.streams
+            """,
+            (date_str, round(total_bytes / 1024**3, 3), total_streams),
+        )
+        count += 1
+    return count
+
+
 async def _poll_rd_once() -> None:
     rd_token = get_config()["rd_token"]
     if not rd_token:
         return
     headers = {"Authorization": f"Bearer {rd_token}"}
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    now   = datetime.utcnow()
+    today = now.strftime("%Y-%m-%d")
+    # RD API caps /traffic/details at 31 days per request.
+    # We backfill 1 year of history in 30-day chunks on first run,
+    # then do a rolling 31-day update on normal polls.
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            # Historical daily data: {"YYYY-MM-DD": {"host": bytes_int}}
-            # Pass start= to get up to 12 months of history (default is current month only)
-            year_start = (datetime.utcnow().replace(month=1, day=1)).strftime("%Y-%m-%d")
-            det = await client.get(
-                "https://api.real-debrid.com/rest/1.0/traffic/details",
-                headers=headers,
-                params={"start": year_start},
-            )
-            det.raise_for_status()
-            details = det.json()
-
-            # Real-time today: {"host": {"downloaded": bytes, "links": n}}
-            tod = await client.get(
-                "https://api.real-debrid.com/rest/1.0/traffic",
-                headers=headers,
-            )
-            tod.raise_for_status()
-            today_data = tod.json()
-
         async with aiosqlite.connect(DB_PATH) as db:
-            # Store historical per-day data
-            # /traffic/details format: {"YYYY-MM-DD": {"host": bytes_int}}
-            #   OR {"YYYY-MM-DD": {"host": {"downloaded": bytes, "streams": n}}}
-            for date_str, hosts in details.items():
-                if not isinstance(hosts, dict):
-                    continue
-                total_bytes   = 0
-                total_streams = 0
-                for h in hosts.values():
-                    if isinstance(h, dict):
-                        total_bytes   += h.get("downloaded") or 0
-                        total_streams += h.get("streams")    or 0
-                    elif isinstance(h, (int, float)):
-                        total_bytes += h
-                await db.execute(
-                    """
-                    INSERT INTO rd_daily_usage (date, downloaded_gb, streams)
-                    VALUES (?,?,?)
-                    ON CONFLICT(date) DO UPDATE SET
-                        downloaded_gb = excluded.downloaded_gb,
-                        streams       = excluded.streams
-                    """,
-                    (date_str, round(total_bytes / 1024**3, 3), total_streams),
-                )
+            async with db.execute("SELECT MIN(date) FROM rd_daily_usage") as c:
+                r = await c.fetchone()
+                oldest_in_db = r[0]  # None or "YYYY-MM-DD"
 
-            # Store today's real-time total (overwrites detail entry for today)
+            target_start = (now - timedelta(days=365)).strftime("%Y-%m-%d")
+            needs_backfill = (oldest_in_db is None or oldest_in_db > target_start)
+
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                if needs_backfill:
+                    # Fetch in 30-day chunks going backwards until 1 year ago
+                    chunk_end = now.date()
+                    target    = (now - timedelta(days=365)).date()
+                    chunks    = 0
+                    while chunk_end > target:
+                        chunk_start = max(chunk_end - timedelta(days=30), target)
+                        det = await client.get(
+                            "https://api.real-debrid.com/rest/1.0/traffic/details",
+                            headers=headers,
+                            params={
+                                "start": chunk_start.strftime("%Y-%m-%d"),
+                                "end":   chunk_end.strftime("%Y-%m-%d"),
+                            },
+                        )
+                        if det.status_code == 200:
+                            await _upsert_rd_details(db, det.json())
+                            chunks += 1
+                        chunk_end = chunk_start - timedelta(days=1)
+                        await asyncio.sleep(0.5)  # gentle rate-limit
+                    logger.info("RD backfill complete: %d chunk(s) fetched", chunks)
+                else:
+                    # Normal incremental poll: last 31 days
+                    start_31 = (now - timedelta(days=31)).strftime("%Y-%m-%d")
+                    det = await client.get(
+                        "https://api.real-debrid.com/rest/1.0/traffic/details",
+                        headers=headers,
+                        params={"start": start_31},
+                    )
+                    det.raise_for_status()
+                    await _upsert_rd_details(db, det.json())
+
+                # Real-time today: {"host": {"downloaded": bytes, "links": n}}
+                tod = await client.get(
+                    "https://api.real-debrid.com/rest/1.0/traffic",
+                    headers=headers,
+                )
+                tod.raise_for_status()
+                today_data = tod.json()
+
             if isinstance(today_data, dict):
                 today_bytes = sum(
                     (v.get("downloaded") or 0)
@@ -372,7 +406,7 @@ async def _poll_rd_once() -> None:
                         (today, round(today_bytes / 1024**3, 3)),
                     )
             await db.commit()
-        logger.info("RD traffic updated, %d day(s) + today realtime", len(details))
+        logger.info("RD traffic updated (today realtime stored)")
     except Exception as exc:
         logger.warning("RD poll error: %s", exc)
 
