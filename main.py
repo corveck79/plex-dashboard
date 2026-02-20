@@ -327,11 +327,19 @@ async def _poll_rd_once() -> None:
 
         async with aiosqlite.connect(DB_PATH) as db:
             # Store historical per-day data
+            # /traffic/details format: {"YYYY-MM-DD": {"host": bytes_int}}
+            #   OR {"YYYY-MM-DD": {"host": {"downloaded": bytes, "streams": n}}}
             for date_str, hosts in details.items():
                 if not isinstance(hosts, dict):
                     continue
-                total_bytes   = sum((h.get("downloaded") or 0) for h in hosts.values())
-                total_streams = sum((h.get("streams")    or 0) for h in hosts.values())
+                total_bytes   = 0
+                total_streams = 0
+                for h in hosts.values():
+                    if isinstance(h, dict):
+                        total_bytes   += h.get("downloaded") or 0
+                        total_streams += h.get("streams")    or 0
+                    elif isinstance(h, (int, float)):
+                        total_bytes += h
                 await db.execute(
                     """
                     INSERT INTO rd_daily_usage (date, downloaded_gb, streams)
