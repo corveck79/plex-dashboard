@@ -526,9 +526,8 @@ async def api_debrid():
 
     return {
         "endpoints": results,
-        "url": DEBRID_URL,
-        "error": first_error if not results else None,
         "url": debrid_url,
+        "error": first_error if not results else None,
         "items": items or [],
         "categories": categories,
         "counts": counts,
@@ -777,8 +776,9 @@ async def api_zilean():
         result["error"] = "ZILEAN_URL not configured"
         return result
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
             h = await client.get(f"{zilean_url}/healthchecks/ping")
+            result["ping_status"] = h.status_code
             result["healthy"] = h.status_code == 200
             # Try to get an indexed torrent count via a minimal DMM filtered query
             try:
