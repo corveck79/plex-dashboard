@@ -309,10 +309,13 @@ async def _poll_rd_once() -> None:
     today = datetime.utcnow().strftime("%Y-%m-%d")
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            # Historical daily data: {"YYYY-MM-DD": {"host": {"downloaded": bytes, "streams": n}}}
+            # Historical daily data: {"YYYY-MM-DD": {"host": bytes_int}}
+            # Pass start= to get up to 12 months of history (default is current month only)
+            year_start = (datetime.utcnow().replace(month=1, day=1)).strftime("%Y-%m-%d")
             det = await client.get(
                 "https://api.real-debrid.com/rest/1.0/traffic/details",
                 headers=headers,
+                params={"start": year_start},
             )
             det.raise_for_status()
             details = det.json()
