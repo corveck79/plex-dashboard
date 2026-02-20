@@ -305,24 +305,33 @@ async def _poll_rd_once() -> None:
     rd_token = get_config()["rd_token"]
     if not rd_token:
         return
+    headers = {"Authorization": f"Bearer {rd_token}"}
+    today = datetime.utcnow().strftime("%Y-%m-%d")
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            # /traffic/details returns {"YYYY-MM-DD": {"host": {"downloaded": bytes, "streams": n}}}
-            resp = await client.get(
+            # Historical daily data: {"YYYY-MM-DD": {"host": {"downloaded": bytes, "streams": n}}}
+            det = await client.get(
                 "https://api.real-debrid.com/rest/1.0/traffic/details",
-                headers={"Authorization": f"Bearer {rd_token}"},
+                headers=headers,
             )
-            resp.raise_for_status()
-            traffic = resp.json()
+            det.raise_for_status()
+            details = det.json()
 
-        # Aggregate all hosts per day
+            # Real-time today: {"host": {"downloaded": bytes, "links": n}}
+            tod = await client.get(
+                "https://api.real-debrid.com/rest/1.0/traffic",
+                headers=headers,
+            )
+            tod.raise_for_status()
+            today_data = tod.json()
+
         async with aiosqlite.connect(DB_PATH) as db:
-            for date_str, hosts in traffic.items():
+            # Store historical per-day data
+            for date_str, hosts in details.items():
                 if not isinstance(hosts, dict):
                     continue
                 total_bytes   = sum((h.get("downloaded") or 0) for h in hosts.values())
                 total_streams = sum((h.get("streams")    or 0) for h in hosts.values())
-                dl_gb = round(total_bytes / 1024**3, 3)
                 await db.execute(
                     """
                     INSERT INTO rd_daily_usage (date, downloaded_gb, streams)
@@ -331,10 +340,28 @@ async def _poll_rd_once() -> None:
                         downloaded_gb = excluded.downloaded_gb,
                         streams       = excluded.streams
                     """,
-                    (date_str, dl_gb, total_streams),
+                    (date_str, round(total_bytes / 1024**3, 3), total_streams),
                 )
+
+            # Store today's real-time total (overwrites detail entry for today)
+            if isinstance(today_data, dict):
+                today_bytes = sum(
+                    (v.get("downloaded") or 0)
+                    for v in today_data.values()
+                    if isinstance(v, dict)
+                )
+                if today_bytes > 0:
+                    await db.execute(
+                        """
+                        INSERT INTO rd_daily_usage (date, downloaded_gb, streams)
+                        VALUES (?,?,0)
+                        ON CONFLICT(date) DO UPDATE SET
+                            downloaded_gb = excluded.downloaded_gb
+                        """,
+                        (today, round(today_bytes / 1024**3, 3)),
+                    )
             await db.commit()
-        logger.info("RD traffic updated, %d day(s)", len(traffic))
+        logger.info("RD traffic updated, %d day(s) + today realtime", len(details))
     except Exception as exc:
         logger.warning("RD poll error: %s", exc)
 
@@ -704,6 +731,83 @@ async def api_rd_usage(days: int = 30):
         ) as cur:
             rows = [dict(r) for r in await cur.fetchall()]
     return {"data": rows, "days": days, "has_token": bool(get_config()["rd_token"])}
+
+
+@app.get("/api/rd/stats")
+async def api_rd_stats():
+    now         = datetime.utcnow()
+    today       = now.strftime("%Y-%m-%d")
+    month_start = now.strftime("%Y-%m-01")
+    year_start  = now.strftime("%Y-01-01")
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+
+        async def _sum(where: str, param: str):
+            async with db.execute(
+                f"SELECT COALESCE(SUM(downloaded_gb),0) AS gb, COALESCE(SUM(streams),0) AS s "
+                f"FROM rd_daily_usage WHERE {where}",
+                (param,),
+            ) as c:
+                r = await c.fetchone()
+                return round(r["gb"], 2), int(r["s"])
+
+        today_gb,  today_s  = await _sum("date = ?",   today)
+        month_gb,  month_s  = await _sum("date >= ?",  month_start)
+        year_gb,   year_s   = await _sum("date >= ?",  year_start)
+
+        async with db.execute(
+            "SELECT COALESCE(SUM(downloaded_gb),0) AS gb, COALESCE(SUM(streams),0) AS s FROM rd_daily_usage"
+        ) as c:
+            r = await c.fetchone()
+            global_gb, global_s = round(r["gb"], 2), int(r["s"])
+
+        # Daily last 30 days
+        since30 = (now - timedelta(days=30)).strftime("%Y-%m-%d")
+        async with db.execute(
+            "SELECT date, downloaded_gb, streams FROM rd_daily_usage WHERE date >= ? ORDER BY date",
+            (since30,),
+        ) as c:
+            daily = [dict(r) for r in await c.fetchall()]
+
+        # Weekly (last 12 weeks, oldest first)
+        async with db.execute(
+            """SELECT strftime('%Y-W%W', date) AS period,
+                      ROUND(SUM(downloaded_gb),2) AS gb, SUM(streams) AS streams
+               FROM rd_daily_usage
+               GROUP BY period ORDER BY period DESC LIMIT 12"""
+        ) as c:
+            weekly = list(reversed([dict(r) for r in await c.fetchall()]))
+
+        # Monthly (last 12 months, oldest first)
+        async with db.execute(
+            """SELECT strftime('%Y-%m', date) AS period,
+                      ROUND(SUM(downloaded_gb),2) AS gb, SUM(streams) AS streams
+               FROM rd_daily_usage
+               GROUP BY period ORDER BY period DESC LIMIT 12"""
+        ) as c:
+            monthly = list(reversed([dict(r) for r in await c.fetchall()]))
+
+        # Yearly (oldest first)
+        async with db.execute(
+            """SELECT strftime('%Y', date) AS period,
+                      ROUND(SUM(downloaded_gb),2) AS gb, SUM(streams) AS streams
+               FROM rd_daily_usage
+               GROUP BY period ORDER BY period ASC"""
+        ) as c:
+            yearly = [dict(r) for r in await c.fetchall()]
+
+    return {
+        "has_token":     bool(get_config()["rd_token"]),
+        "today_gb":      today_gb,  "today_streams":  today_s,
+        "month_gb":      month_gb,  "month_streams":  month_s,
+        "year_gb":       year_gb,   "year_streams":   year_s,
+        "global_gb":     global_gb, "global_streams": global_s,
+        "daily":         daily,
+        "weekly":        weekly,
+        "monthly":       monthly,
+        "yearly":        yearly,
+    }
 
 
 @app.get("/api/system/current")

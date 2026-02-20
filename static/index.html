@@ -260,14 +260,46 @@
         <canvas id="transcode-chart"></canvas>
       </div>
     </div>
-    <div class="card rounded-xl p-5">
-      <h2 class="font-semibold mb-4">Real-Debrid Daily Usage (last 30d)</h2>
-      <div class="relative" style="height:220px">
-        <canvas id="rd-chart"></canvas>
-        <div id="rd-notoken" class="absolute inset-0 hidden items-center justify-center text-gray-600 text-sm flex flex-col gap-1">
-          <span>No RD_TOKEN configured</span>
-          <span class="text-xs">Add RD_TOKEN to docker-compose.yml</span>
+    <div class="card rounded-xl p-5 space-y-4">
+      <h2 class="font-semibold">Real-Debrid Traffic</h2>
+
+      <!-- 4 stat chips -->
+      <div id="rd-notoken" class="hidden text-gray-600 text-sm text-center py-4 flex-col gap-1">
+        <span>No RD_TOKEN configured</span>
+        <span class="text-xs">Add RD_TOKEN to config.json</span>
+      </div>
+      <div id="rd-stats-grid" class="grid grid-cols-2 gap-2">
+        <div class="rounded-lg p-3 text-center" style="background:#1e2535">
+          <p class="text-xs text-gray-500 uppercase tracking-widest mb-1">Today</p>
+          <p class="text-lg font-bold text-plex" id="rd-today">—</p>
         </div>
+        <div class="rounded-lg p-3 text-center" style="background:#1e2535">
+          <p class="text-xs text-gray-500 uppercase tracking-widest mb-1">This Month</p>
+          <p class="text-lg font-bold text-blue-400" id="rd-month">—</p>
+        </div>
+        <div class="rounded-lg p-3 text-center" style="background:#1e2535">
+          <p class="text-xs text-gray-500 uppercase tracking-widest mb-1">This Year</p>
+          <p class="text-lg font-bold text-green-400" id="rd-year">—</p>
+        </div>
+        <div class="rounded-lg p-3 text-center" style="background:#1e2535">
+          <p class="text-xs text-gray-500 uppercase tracking-widest mb-1">All Time</p>
+          <p class="text-lg font-bold text-purple-400" id="rd-global">—</p>
+        </div>
+      </div>
+
+      <!-- Daily chart -->
+      <div class="relative" style="height:160px">
+        <canvas id="rd-chart"></canvas>
+      </div>
+
+      <!-- Period summary table -->
+      <div>
+        <div class="flex gap-1 mb-2">
+          <button class="rd-period-btn btn-active px-2 py-1 text-xs rounded" data-p="weekly"  onclick="showRdPeriod('weekly')">Weekly</button>
+          <button class="rd-period-btn px-2 py-1 text-xs rounded" data-p="monthly" onclick="showRdPeriod('monthly')" style="background:#1e2535;color:#9ca3af">Monthly</button>
+          <button class="rd-period-btn px-2 py-1 text-xs rounded" data-p="yearly"  onclick="showRdPeriod('yearly')"  style="background:#1e2535;color:#9ca3af">Yearly</button>
+        </div>
+        <div id="rd-period-table" class="space-y-1 overflow-y-auto" style="max-height:140px"></div>
       </div>
     </div>
   </div>
@@ -1006,61 +1038,84 @@ async function loadTranscodeStats() {
   } catch(e) { console.error(e); }
 }
 
+let _rdStats = null;
+
+function fmtStorage(gb) {
+  if (gb >= 1024) return (gb / 1024).toFixed(2) + ' TB';
+  if (gb >= 1)    return gb.toFixed(2) + ' GB';
+  return (gb * 1024).toFixed(0) + ' MB';
+}
+
 async function loadRdUsage() {
   try {
-    const res  = await fetch('/api/rd/usage?days=30');
+    const res  = await fetch('/api/rd/stats');
     const json = await res.json();
+    _rdStats = json;
 
     if (!json.has_token) {
       document.getElementById('rd-notoken').classList.replace('hidden','flex');
+      document.getElementById('rd-stats-grid').classList.add('hidden');
       return;
     }
 
-    const data = json.data || [];
-    if (!data.length) return;
+    // Stat chips
+    document.getElementById('rd-today').textContent  = fmtStorage(json.today_gb  || 0);
+    document.getElementById('rd-month').textContent  = fmtStorage(json.month_gb  || 0);
+    document.getElementById('rd-year').textContent   = fmtStorage(json.year_gb   || 0);
+    document.getElementById('rd-global').textContent = fmtStorage(json.global_gb || 0);
 
+    // Daily bar chart
+    const daily = json.daily || [];
     destroyChart('rd');
-    charts['rd'] = new Chart(document.getElementById('rd-chart'), {
-      type: 'bar',
-      data: {
-        labels: data.map(r => r.date),
-        datasets: [{
-          label: 'Downloaded (GB)',
-          data: data.map(r => r.downloaded_gb),
-          backgroundColor: '#8B5CF699',
-          borderColor: '#8B5CF6',
-          borderWidth: 1,
-          yAxisID: 'y',
-        }, {
-          label: 'Streams',
-          data: data.map(r => r.streams),
-          backgroundColor: '#E5A00D55',
-          borderColor: '#E5A00D',
-          borderWidth: 1,
-          type: 'line',
-          yAxisID: 'y1',
-          tension: 0.3,
-          pointRadius: 2,
-        }],
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { labels: { color:'#9ca3af' } } },
-        scales: {
-          x: { grid: { color:'#232a3a' }, ticks: { color:'#4b5563', maxTicksLimit:10 } },
-          y: {
-            beginAtZero: true, grid: { color:'#232a3a' },
-            ticks: { color:'#4b5563', callback: v => v+'GB' },
-          },
-          y1: {
-            beginAtZero: true, position: 'right',
-            grid: { drawOnChartArea: false },
-            ticks: { color:'#E5A00D', stepSize: 1 },
+    if (daily.length) {
+      charts['rd'] = new Chart(document.getElementById('rd-chart'), {
+        type: 'bar',
+        data: {
+          labels: daily.map(r => r.date.slice(5)),   // MM-DD
+          datasets: [{
+            label: 'GB',
+            data: daily.map(r => r.downloaded_gb),
+            backgroundColor: '#8B5CF699',
+            borderColor: '#8B5CF6',
+            borderWidth: 1,
+          }],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { grid: { color:'#232a3a' }, ticks: { color:'#4b5563', maxTicksLimit:15, font:{size:10} } },
+            y: { beginAtZero: true, grid: { color:'#232a3a' },
+                 ticks: { color:'#4b5563', callback: v => fmtStorage(v) } },
           },
         },
-      },
-    });
+      });
+    }
+
+    // Period table — default weekly
+    showRdPeriod('weekly');
   } catch(e) { console.error(e); }
+}
+
+function showRdPeriod(period) {
+  document.querySelectorAll('.rd-period-btn').forEach(b => {
+    const active = b.dataset.p === period;
+    b.classList.toggle('btn-active', active);
+    b.style.background = active ? '' : '#1e2535';
+    b.style.color = active ? '' : '#9ca3af';
+  });
+  if (!_rdStats) return;
+  const rows = _rdStats[period] || [];
+  const box  = document.getElementById('rd-period-table');
+  if (!rows.length) {
+    box.innerHTML = '<p class="text-xs text-gray-600 text-center py-2">No data yet</p>';
+    return;
+  }
+  box.innerHTML = rows.slice().reverse().map(r => `
+    <div class="flex items-center justify-between px-2 py-1 rounded text-xs" style="background:#1e2535">
+      <span class="text-gray-400">${esc(r.period)}</span>
+      <span class="text-purple-300 font-medium">${fmtStorage(r.gb)}</span>
+    </div>`).join('');
 }
 
 // ════════════════════════════════════════════════════════════════════════════
